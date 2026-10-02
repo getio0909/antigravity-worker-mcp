@@ -1,11 +1,19 @@
 $ErrorActionPreference = 'Stop'
 if (-not $env:RELEASE_TARGET -or -not $env:RUST_VERSION) { throw 'Target and toolchain are required' }
 
-# The hosted runner forbids Job Object breakaway. WMI starts an account-free
-# test process outside that job without changing its security policy.
+# Cargo places its children in a job that forbids breakaway. Compile first,
+# then run account-free test binaries outside Cargo and the CI runner's job.
 function Quote-PS([string] $Value) { return "'" + $Value.Replace("'", "''") + "'" }
 $cargo = (Get-Command cargo).Source
 $workspace = $PWD.Path
+$artifacts = & $cargo ('+' + $env:RUST_VERSION) test --locked --target $env:RELEASE_TARGET --all-features --no-run --message-format=json
+if ($LASTEXITCODE -ne 0) { throw 'Windows test compilation failed' }
+$executables = @($artifacts | ForEach-Object {
+    $artifact = $_ | ConvertFrom-Json
+    if ($artifact.reason -eq 'compiler-artifact' -and $artifact.profile.test -and $artifact.executable) { $artifact.executable }
+})
+if ($executables.Count -lt 3) { throw 'Compiled Windows test executables are missing' }
+$executableJson = ConvertTo-Json -InputObject $executables -Compress
 $output = Join-Path ([System.IO.Path]::GetTempPath()) ('agymcp-ci-' + [guid]::NewGuid())
 New-Item -ItemType Directory $output | Out-Null
 $log = Join-Path $output 'test.log'
@@ -21,8 +29,12 @@ $script = @"
 `$code = 1
 try {
     Set-Location $(Quote-PS $workspace)
-    & $(Quote-PS $cargo) $(Quote-PS ('+' + $env:RUST_VERSION)) test --locked --target $(Quote-PS $env:RELEASE_TARGET) --all-features *> $(Quote-PS $log)
-    `$code = `$LASTEXITCODE
+    `$executables = $(Quote-PS $executableJson) | ConvertFrom-Json
+    `$code = 0
+    foreach (`$executable in `$executables) {
+        & `$executable *>> $(Quote-PS $log)
+        if (`$LASTEXITCODE -ne 0) { `$code = `$LASTEXITCODE; break }
+    }
 } catch {
     `$_ | Out-File -Append $(Quote-PS $log)
 }
@@ -56,3 +68,5 @@ try {
     Remove-Item -Recurse -Force $output
 }
 if ($code -ne 0) { throw "Windows tests failed with exit code $code" }
+& $cargo ('+' + $env:RUST_VERSION) test --locked --target $env:RELEASE_TARGET --all-features --doc
+if ($LASTEXITCODE -ne 0) { throw 'Windows documentation tests failed' }

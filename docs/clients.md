@@ -86,3 +86,5 @@ Linux supports all three execution modes. macOS and Windows explicitly reject wo
 Version 0.2 separates short MCP control requests from unlimited task execution. Keep a normal per-call timeout for submission, polling and cancellation; increasing it to cover the full task is unnecessary. `timeoutSeconds: 0` is the default task lifetime. Supply an `idempotency_key` for uncertain retries, use `ag_list` to find IDs after reconnecting, and explicitly cancel unwanted work. `ag_forget` frees completed-result capacity while preserving enabled audit logs.
 
 Windows requires the MCP launcher to permit Job Object breakaway. A launcher that forbids it produces `BACKGROUND_UNAVAILABLE` rather than silently tying work to client lifetime. Authentication follows the launching user session; an SSH or service session may not have the desktop keychain context. Test actual Codex and Claude Code sessions, not only an SSH shell.
+
+On Windows, register the built `.exe` directly rather than launching the server through `cargo run`: Cargo creates its own restrictive Job Object. The Windows CI harness compiles tests first and runs their executables separately.
