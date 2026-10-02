@@ -124,6 +124,8 @@ pub struct Config {
     pub models: Models,
     #[serde(default = "host_enabled")]
     pub allow_host_execution: bool,
+    #[serde(default = "host_enabled")]
+    pub windows_desktop_fallback: bool,
     #[serde(default)]
     pub runtime_paths: Vec<PathBuf>,
     #[serde(default)]

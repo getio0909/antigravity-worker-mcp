@@ -8,6 +8,7 @@
     "deep": null
   },
   "allowHostExecution": true,
+  "windowsDesktopFallback": true,
   "auditLogging": true,
   "timeoutSeconds": 0,
   "maxQueue": 8,

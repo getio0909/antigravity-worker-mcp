@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- Support Windows MCP hosts that refuse direct Job Object breakaway through a temporary current-user Task Scheduler launch. The existing interactive sign-in supplies authentication; no password or task-input file is created.
+- Authenticate both endpoints of a private, local-only named pipe and transfer bounded startup input in memory. Startup cleanup uses an open process handle rather than a saved PID.
+- Remove temporary task registrations after startup, with an expiry fallback for abandoned registration. Scheduled supervisors have no task-engine execution limit or restart policy.
+- Add windowsDesktopFallback, enabled by default; disable it to require direct background launch. Record the selected launch route and launcher diagnostics in enabled audit logs.
+- Correct Windows verification: the earlier Node-based probe measured a descendant's Job Object; a direct MCP process probe exposed Codex's restrictive job.
+
 ## 0.2.0
 
 - Default task and result retention to unlimited; retain optional positive deadlines without the former 900-second cap.

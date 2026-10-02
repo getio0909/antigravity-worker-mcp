@@ -1,5 +1,7 @@
 # Audit logging
 
+Windows desktop launch records its route and launcher diagnostics when audit capture is enabled. Temporary Task Scheduler registration contains only executable and pipe metadata; task text stays in the private startup pipe and enabled task audit. Disabling wrapper logs does not disable Windows operational event logs.
+
 Full local audit logging is enabled by default. Logs survive result expiry, client disconnection and normal server shutdown. Rotation creates additional files without deleting older files. There is no automatic age or size retention limit.
 
 ## Configuration

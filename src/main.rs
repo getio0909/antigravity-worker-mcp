@@ -18,6 +18,14 @@ async fn run() -> Outcome<()> {
     if args.len() == 1 && args[0] == "--run-job" {
         return antigravity_worker_mcp::broker::run_job().await;
     }
+    #[cfg(windows)]
+    if args.len() == 2 && args[0] == "--run-job-pipe" {
+        unsafe {
+            windows_sys::Win32::System::Console::FreeConsole();
+        }
+        let bytes = antigravity_worker_mcp::windows_background::receive(&args[1]).await?;
+        return antigravity_worker_mcp::broker::run_job_bytes(bytes).await;
+    }
     if args.len() == 1 && args[0] == "--help" {
         println!("Usage: antigravity-worker-mcp --config /absolute/path/config.json [--no-audit]");
         return Ok(());

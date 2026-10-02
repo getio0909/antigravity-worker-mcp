@@ -74,6 +74,7 @@ The executable uses the official RMCP SDK and Rust dependencies listed below. De
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | [source](https://crates.io/crates/sha2/0.10.9) | [license](licenses/sha2-0.10.9-LICENSE-APACHE.txt), [license](licenses/sha2-0.10.9-LICENSE-MIT.txt) |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | [source](https://crates.io/crates/shlex/2.0.1) | [license](licenses/shlex-2.0.1-LICENSE-APACHE.txt), [license](licenses/shlex-2.0.1-LICENSE-MIT.txt) |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | [source](https://crates.io/crates/signal-hook-registry/1.4.8) | [license](licenses/signal-hook-registry-1.4.8-LICENSE-APACHE.txt), [license](licenses/signal-hook-registry-1.4.8-LICENSE-MIT.txt) |
+| socket2 | 0.6.5 | MIT OR Apache-2.0 | [source](https://crates.io/crates/socket2/0.6.5) | [license](licenses/socket2-0.6.5-LICENSE-APACHE.txt), [license](licenses/socket2-0.6.5-LICENSE-MIT.txt) |
 | slab | 0.4.12 | MIT | [source](https://crates.io/crates/slab/0.4.12) | [license](licenses/slab-0.4.12-LICENSE.txt) |
 | strsim | 0.11.1 | MIT | [source](https://crates.io/crates/strsim/0.11.1) | [license](licenses/strsim-0.11.1-LICENSE.txt) |
 | syn | 2.0.119 | MIT OR Apache-2.0 | [source](https://crates.io/crates/syn/2.0.119) | [license](licenses/syn-2.0.119-LICENSE-APACHE.txt), [license](licenses/syn-2.0.119-LICENSE-MIT.txt) |

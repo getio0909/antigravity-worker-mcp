@@ -6,3 +6,5 @@ pub mod platform;
 pub mod runtime;
 pub mod server;
 pub mod snapshot;
+#[cfg(windows)]
+pub mod windows_background;

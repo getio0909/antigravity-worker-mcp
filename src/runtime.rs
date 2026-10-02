@@ -203,7 +203,7 @@ async fn process_with_capture(
         });
     }
     #[cfg(windows)]
-    cmd.creation_flags(0x00000200);
+    cmd.creation_flags(0x08000200);
     let mut child = cmd.spawn().map_err(|_| {
         Failure::new(
             "EXECUTABLE_UNAVAILABLE",

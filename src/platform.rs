@@ -3,6 +3,58 @@ use crate::model::{Failure, Outcome, io_failure};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::{fs, path::Path};
 
+pub enum Supervisor {
+    Direct(Box<tokio::process::Child>),
+    #[cfg(windows)]
+    Desktop(crate::windows_background::Process),
+}
+impl Supervisor {
+    pub fn id(&self) -> Option<u32> {
+        match self {
+            Self::Direct(child) => child.id(),
+            #[cfg(windows)]
+            Self::Desktop(child) => Some(child.id),
+        }
+    }
+    pub fn route(&self) -> &'static str {
+        match self {
+            Self::Direct(_) => "direct",
+            #[cfg(windows)]
+            Self::Desktop(_) => "windows-interactive-task",
+        }
+    }
+    pub fn exited(&mut self) -> Outcome<bool> {
+        match self {
+            Self::Direct(child) => Ok(child.try_wait().map_err(io_failure)?.is_some()),
+            #[cfg(windows)]
+            Self::Desktop(child) => child.exited(),
+        }
+    }
+    pub async fn stop(&mut self) -> Outcome<()> {
+        match self {
+            Self::Direct(child) => {
+                if child.try_wait().map_err(io_failure)?.is_none() {
+                    child.kill().await.map_err(io_failure)?;
+                }
+                child.wait().await.map_err(io_failure)?;
+                Ok(())
+            }
+            #[cfg(windows)]
+            Self::Desktop(child) => child.stop().await,
+        }
+    }
+    pub async fn wait(&mut self) -> Outcome<()> {
+        match self {
+            Self::Direct(child) => {
+                child.wait().await.map_err(io_failure)?;
+                Ok(())
+            }
+            #[cfg(windows)]
+            Self::Desktop(child) => child.wait().await,
+        }
+    }
+}
+
 pub async fn interrupt() {
     if tokio::signal::ctrl_c().await.is_err() {
         // Detached Windows processes may have no console control handler.

@@ -251,6 +251,7 @@ impl Broker {
             job_id: id.clone(),
             submitted_at: submitted,
         };
+        let bytes = serde_json::to_vec(&packet).map_err(io_failure)?;
         let mut command = Command::new(&self.executable);
         command
             .arg("--run-job")
@@ -269,8 +270,17 @@ impl Broker {
         }
         #[cfg(windows)]
         command.creation_flags(0x01000208);
-        let mut child = match command.spawn() {
-            Ok(child) => child,
+        let launched = match command.spawn() {
+            Ok(mut child) => {
+                let mut stdin = child.stdin.take().unwrap();
+                let delivery =
+                    tokio::time::timeout(Duration::from_secs(5), stdin.write_all(&bytes)).await;
+                drop(stdin);
+                Ok((
+                    platform::Supervisor::Direct(Box::new(child)),
+                    matches!(delivery, Ok(Ok(()))),
+                ))
+            }
             Err(cause) => {
                 let error = Failure {
                     code: "BACKGROUND_UNAVAILABLE".into(),
@@ -281,6 +291,29 @@ impl Broker {
                             .map_or_else(|| "unavailable".into(), |code| code.to_string())
                     ),
                 };
+                #[cfg(windows)]
+                if cause.raw_os_error() == Some(5) && self.config.windows_desktop_fallback {
+                    crate::windows_background::launch(
+                        &self.executable,
+                        &bytes,
+                        self.audit.capture(format!("job-{id}.desktop-launch")),
+                    )
+                    .await
+                    .map(|child| (platform::Supervisor::Desktop(child), true))
+                } else {
+                    Err(error)
+                }
+                #[cfg(not(windows))]
+                Err(error)
+            }
+        };
+        let (mut child, delivered) = match launched {
+            Ok(child) => child,
+            Err(error) => {
+                record = self.read_record(&id)?;
+                if record.terminal() {
+                    return Ok(submission_reply(&record, false));
+                }
                 let mut result = RunResult::empty(model);
                 result.error = Some(error.clone());
                 atomic_json(&directory.join("result.json"), &result)?;
@@ -294,18 +327,13 @@ impl Broker {
                 return Ok(submission_reply(&record, false));
             }
         };
-        let bytes = serde_json::to_vec(&packet).map_err(io_failure)?;
-        let mut stdin = child.stdin.take().unwrap();
-        let delivery = tokio::time::timeout(Duration::from_secs(5), stdin.write_all(&bytes)).await;
-        drop(stdin);
-        let delivered = matches!(delivery, Ok(Ok(())));
         let end = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
             record = self.read_record(&id)?;
             if record.supervisor_ready || record.terminal() || tokio::time::Instant::now() >= end {
                 break;
             }
-            if child.try_wait().map_err(io_failure)?.is_some() {
+            if child.exited()? {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -314,8 +342,7 @@ impl Broker {
             let _transition = acquire(&directory.join("transition.lock")).await?;
             record = self.read_record(&id)?;
             if !record.supervisor_ready && !record.terminal() {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
+                let stopped = child.stop().await.is_ok();
                 let mut result = RunResult::empty(model);
                 result.error = Some(Failure::new(
                     "SUPERVISOR_STARTUP_FAILED",
@@ -330,12 +357,12 @@ impl Broker {
                 record.status["completion"] = "incomplete".into();
                 record.status["error"] = serde_json::to_value(&result.error).map_err(io_failure)?;
                 record.status["finished_at"] = jobs::now().into();
-                record.status["process_stopped"] = true.into();
+                record.status["process_stopped"] = stopped.into();
                 record.expires_at = expiry(jobs::now(), self.config.retention_seconds);
                 atomic_json(&directory.join("status.json"), &record)?;
             }
         }
-        self.audit.record("job.detached",json!({"job_id":id,"supervisor_pid":child.id(),"supervisor_ready":record.supervisor_ready}))?;
+        self.audit.record("job.detached",json!({"job_id":id,"supervisor_pid":child.id(),"supervisor_ready":record.supervisor_ready,"launch_route":child.route()}))?;
         tokio::spawn(async move {
             let _ = child.wait().await;
         });
@@ -520,6 +547,8 @@ impl Broker {
         value["isolation_installed"] =
             (cfg!(target_os = "linux") && Path::new("/usr/bin/bwrap").exists()).into();
         value["background_jobs"] = true.into();
+        value["windows_desktop_fallback"] =
+            (cfg!(windows) && self.config.windows_desktop_fallback).into();
         value["cross_connection_lookup"] = true.into();
         value["queue_scope"] = "same stateDirectory on one host".into();
         value["dispatch_paused"] = self
@@ -571,6 +600,15 @@ pub async fn run_job() -> Outcome<()> {
     })
     .await
     .map_err(io_failure)??;
+    run_job_bytes(bytes).await
+}
+pub async fn run_job_bytes(bytes: Vec<u8>) -> Outcome<()> {
+    if bytes.len() as u64 > PACKET_LIMIT {
+        return Err(Failure::new(
+            "INPUT_INVALID",
+            "Supervisor input exceeds its transport limit.",
+        ));
+    }
     let mut packet: Packet = serde_json::from_slice(&bytes).map_err(io_failure)?;
     packet.config.home = PathBuf::from(
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })

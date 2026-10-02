@@ -35,8 +35,8 @@ CI runs native compilation, lint, tests and packaging for all six targets. Linux
 The release includes an npm package that works without an npm registry publication. With Node.js 20.11 or newer and npm installed:
 
 ```bash
-npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.0/antigravity-worker-mcp-0.2.0.tgz antigravity-worker-mcp --version
-npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.0/antigravity-worker-mcp-0.2.0.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.1/antigravity-worker-mcp-0.2.1.tgz antigravity-worker-mcp --version
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.1/antigravity-worker-mcp-0.2.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
 ```
 
 The dependency-free Node launcher downloads the matching Rust archive, verifies its release SHA-256, and caches the extracted executable and documentation. Later launches verify the cached executable before using it. Arguments, working directory, environment and stdin/stdout pass through to Rust; download messages use stderr. The official `agy` still needs a separate installation and login. Unix extraction requires `tar`; Windows uses PowerShell. Linux musl systems and older glibc need a source build.
@@ -83,8 +83,8 @@ claude mcp add --scope user antigravity-worker -- /absolute/path/antigravity-wor
 Or register the npm launcher on Linux/macOS:
 
 ```bash
-codex mcp add antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.0/antigravity-worker-mcp-0.2.0.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
-claude mcp add --scope user antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.0/antigravity-worker-mcp-0.2.0.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+codex mcp add antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.1/antigravity-worker-mcp-0.2.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+claude mcp add --scope user antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.1/antigravity-worker-mcp-0.2.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
 ```
 
 On Windows, register `cmd /c npx` in place of `npx` so the MCP host can launch npm's command shim. Run the `--version` command once before registration to populate the native executable cache.
@@ -159,7 +159,9 @@ Workspace and analysis modes require Linux. macOS and Windows reject isolation r
 
 `allowHostExecution` defaults to true. Set it to false to reject host tasks. The host root allowlist validates the starting directory, not paths later accessed by commands. Client-side tool approval remains controlled by the MCP host.
 
-Isolated execution keeps the original project outside the mount namespace, but exposes system programs, configured runtimes, network access and the CLI's read-only authentication file. It is not a network firewall or an exfiltration barrier against hostile tasks. Host cancellation covers the supervised CLI and process group; detached services and external side effects can remain. A runner crash or reboot is reported as interrupted work, without automatic replay. Windows launchers that forbid Job Object breakaway receive `BACKGROUND_UNAVAILABLE`; detached mode does not silently become connection-bound execution.
+Isolated execution keeps the original project outside the mount namespace, but exposes system programs, configured runtimes, network access and the CLI's read-only authentication file. It is not a network firewall or an exfiltration barrier against hostile tasks. Host cancellation covers the supervised CLI and process group; detached services and external side effects can remain. A runner crash or reboot is reported as interrupted work, without automatic replay.
+
+Windows first attempts direct Job Object breakaway. If the client prevents it, `windowsDesktopFallback` can launch through a temporary current-user Task Scheduler registration using the existing desktop sign-in. This parameter defaults to true. It saves no password or request file, transfers startup input through a private local pipe and removes temporary registration after startup. Disable it to require direct launch. Without a usable route, the job returns `BACKGROUND_UNAVAILABLE`. The desktop route requires an interactive sign-in and uses profile environment settings rather than transient MCP-process overrides; see the [client guide](docs/clients.md).
 
 Jobs run in detached supervisor processes and survive the submitting client disconnecting. Clients using the same private `stateDirectory` can query or cancel the same job. Reports and patches are stored locally and do not expire by default. `retentionSeconds` can enable expiry; `ag_forget` frees a terminal result slot without removing audit logs or its idempotency record. `maxJobs` bounds retained results, so a full store rejects new submissions instead of silently deleting reports. Full audit logs persist independently in the private state directory; they include task instructions and observed tool output. Isolated CLI history is temporary. Default host mode uses the official CLI's normal history and retention settings. Disabling wrapper logs does not change client, CLI or provider retention.
 

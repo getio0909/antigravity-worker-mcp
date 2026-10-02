@@ -43,7 +43,7 @@ impl Context {
         fs::create_dir(&state).unwrap();
         antigravity_worker_mcp::platform::private_mode(&state, 0o700).unwrap();
         let config = dir.path().join("config.json");
-        fs::write(&config,json!({"agyPath":env!("CARGO_BIN_EXE_agy-fixture"),"allowedRoots":[root],"models":{"fast":"fixture-fast","deep":"fixture-deep"},"stateDirectory":state,"maxQueue":max_queue}).to_string()).unwrap();
+        fs::write(&config,json!({"agyPath":env!("CARGO_BIN_EXE_agy-fixture"),"allowedRoots":[root],"models":{"fast":"fixture-fast","deep":"fixture-deep"},"stateDirectory":state,"maxQueue":max_queue,"windowsDesktopFallback":false}).to_string()).unwrap();
         Self {
             dir,
             worker: Worker::new(Config::load(&config).unwrap()).unwrap(),
