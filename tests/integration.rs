@@ -846,7 +846,12 @@ async fn shared_quota_pause_keeps_waiting_jobs_and_disposal_preserves_keys() {
     fs::write(c.worker.config.state_directory.join("dispatch.pause"), "{}").unwrap();
     broker.cancel(long).await.unwrap();
     tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(broker.status(queued).unwrap()["state"], "queued");
+    assert_eq!(
+        broker.status(queued).unwrap()["state"],
+        "queued",
+        "{}",
+        supervisor_diagnostics(&c.worker.config.state_directory, queued)
+    );
     assert_eq!(broker.forget(queued).await.unwrap_err().code, "JOB_ACTIVE");
     broker.resume().await.unwrap();
     for _ in 0..100 {
@@ -855,7 +860,13 @@ async fn shared_quota_pause_keeps_waiting_jobs_and_disposal_preserves_keys() {
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert_eq!(broker.status(queued).unwrap()["state"], "completed");
+    assert_eq!(
+        broker.status(queued).unwrap()["state"],
+        "completed",
+        "{}; {:?}",
+        supervisor_diagnostics(&c.worker.config.state_directory, queued),
+        broker.status(queued)
+    );
     broker.forget(queued).await.unwrap();
     assert_eq!(
         broker.result(queued, 0, 1000, false).unwrap_err().code,

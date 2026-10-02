@@ -800,9 +800,24 @@ fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Outcome<()> {
         .as_file()
         .sync_all()
         .map_err(|e| checkpoint_error("sync", e))?;
-    temporary
-        .persist(path)
-        .map_err(|e| checkpoint_error("replace", e.error))?;
+    let retry_until = std::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        match temporary.persist(path) {
+            Ok(_) => break,
+            Err(error) => {
+                if cfg!(windows)
+                    && matches!(error.error.raw_os_error(), Some(5 | 32 | 33))
+                    && std::time::Instant::now() < retry_until
+                {
+                    // Windows readers or antivirus can briefly prevent atomic replacement.
+                    temporary = error.file;
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                return Err(checkpoint_error("replace", error.error));
+            }
+        }
+    }
     #[cfg(unix)]
     File::open(path.parent().unwrap())
         .and_then(|f| f.sync_all())

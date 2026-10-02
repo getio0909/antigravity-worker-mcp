@@ -31,9 +31,12 @@ try {
     Set-Location $(Quote-PS $workspace)
     `$executables = $(Quote-PS $executableJson) | ConvertFrom-Json
     `$code = 0
-    foreach (`$executable in `$executables) {
-        & `$executable *>> $(Quote-PS $log)
-        if (`$LASTEXITCODE -ne 0) { `$code = `$LASTEXITCODE; break }
+    for (`$pass = 1; `$pass -le 3; `$pass++) {
+        foreach (`$executable in `$executables) {
+            & `$executable *>> $(Quote-PS $log)
+            if (`$LASTEXITCODE -ne 0) { `$code = `$LASTEXITCODE; break }
+        }
+        if (`$code -ne 0) { break }
     }
 } catch {
     `$_ | Out-File -Append $(Quote-PS $log)
