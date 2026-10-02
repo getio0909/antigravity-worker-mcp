@@ -1,16 +1,17 @@
 {
   "agyPath": "/absolute/path/to/agy",
-  "allowedRoots": ["/absolute/path/to/project"],
+  "allowedRoots": [
+    "/absolute/path/to/project"
+  ],
   "models": {
     "fast": "REPLACE_WITH_A_SLUG_FROM_AGY_MODELS",
     "deep": "REPLACE_WITH_A_SLUG_FROM_AGY_MODELS"
   },
   "allowHostExecution": true,
   "auditLogging": true,
-  "researchDomains": ["developers.google.com", "github.com"],
   "runtimePaths": [],
-  "timeoutSeconds": 300,
+  "timeoutSeconds": 0,
   "maxQueue": 8,
   "maxJobs": 64,
-  "retentionSeconds": 3600
+  "retentionSeconds": 0
 }

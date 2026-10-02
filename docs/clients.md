@@ -1,6 +1,6 @@
 # Codex and Claude Code integration
 
-The server uses stdio MCP and five asynchronous tools. Each client connection owns its jobs and in-memory results. Keep the submitting connection alive through status polling and result retrieval. A shared `stateDirectory` serializes CLI execution across clients, but does not share their job IDs.
+The server uses stdio MCP and eight asynchronous tools. Accepted jobs run independently of client connections. Use the same private `stateDirectory` in Codex and Claude Code to share IDs, status, results and cancellation. Closing a client does not cancel its jobs. Results remain until explicit disposal or configured expiry.
 
 The official client documentation was checked on 2026-10-02. Local acceptance used Codex 0.160.0, Claude Code 2.1.285 and the official Antigravity CLI 1.2.14. See the [verification record](verification.md) for observed outcomes and gaps.
 
@@ -80,3 +80,9 @@ Manage removal through CC Switch so its stored registration and both client file
 Replace the native command with the versioned npx command in the [README](../README.md). On Windows, use `cmd /c npx` to launch npm's command shim. An initial network download adds startup latency; run the README's `--version` command once before adding the server.
 
 Linux supports all three execution modes. macOS and Windows explicitly reject workspace/analysis isolation rather than switching to host mode. Client connection success does not establish model correctness or task-scope compliance. Inspect the actual changes and [audit trace](audit.md), including when a task returns `completed`.
+
+## Background delegation
+
+Version 0.2 separates short MCP control requests from unlimited task execution. Keep a normal per-call timeout for submission, polling and cancellation; increasing it to cover the full task is unnecessary. `timeoutSeconds: 0` is the default task lifetime. Supply an `idempotency_key` for uncertain retries, use `ag_list` to find IDs after reconnecting, and explicitly cancel unwanted work. `ag_forget` frees completed-result capacity while preserving enabled audit logs.
+
+Windows requires the MCP launcher to permit Job Object breakaway. A launcher that forbids it produces `BACKGROUND_UNAVAILABLE` rather than silently tying work to client lifetime. Authentication follows the launching user session; an SSH or service session may not have the desktop keychain context. Test actual Codex and Claude Code sessions, not only an SSH shell.

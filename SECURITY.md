@@ -12,7 +12,7 @@ Isolation keeps the original input root outside the mount namespace. It exposes 
 
 Full local audit logging is enabled by default. It retains task instructions, selected file bytes, MCP traffic, unfiltered CLI streams, diagnostics and terminal results in private per-connection directories, with rotation and no automatic deletion. These materials can contain sensitive content. The wrapper does not dump environment values or inspect authentication caches, but model/tool output can expose private data. Do not upload audit logs to public issues. See the [audit contract](docs/audit.md).
 
-Use `--no-audit` or `auditLogging: false` to disable wrapper logging completely. No audit metadata or disabled marker is retained in that mode. CLI, MCP-host and provider retention follow their own settings. An enabled logger's storage failure stops dispatch and cancels the affected connection's supervised jobs rather than silently dropping records.
+Use `--no-audit` or `auditLogging: false` to disable wrapper logging completely. No audit metadata or disabled marker is retained in that mode. CLI, MCP-host and provider retention follow their own settings. An enabled logger's storage failure stops dispatch and cancels the affected supervised execution rather than silently dropping records.
 
 The host-mode agent chooses its own tools and working steps. The wrapper adds task context and report formatting without behavioral restrictions. Task wording does not enforce command or filesystem policy. With current-user authority, the agent can also modify or delete audit files; the trace is not tamper-proof. Inspect actual results and side effects independently.
 
@@ -21,3 +21,5 @@ Isolated CLI history is ephemeral. A forced wrapper termination may leave privat
 Cancellation supervises the CLI and process group. Host-mode detached processes, modified files and external side effects can outlive cancellation. Reports are always unverified until independently checked.
 
 For a vulnerability, use the repository's private vulnerability-reporting channel when available. Include affected version, a synthetic reproducer and observed behavior. Do not place credentials, real conversations or sensitive logs in public issues.
+
+Accepted jobs outlive their submitting client. Shared private state grants the same current-user clients cross-client lookup and cancellation. Keep this directory local and private. Operational metadata and final results persist even when audit logging is off; original task inputs are not saved as replay requests. Results do not expire by default and reach a configured capacity; explicit disposal preserves audit logs and retry records. Abrupt runner failure is reported without automatic task replay or a claim that all host processes stopped.

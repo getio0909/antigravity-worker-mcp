@@ -12,7 +12,7 @@ Full local audit logging is enabled by default. Logs survive result expiry, clie
 }
 ```
 
-All three settings are optional. The default directory is `stateDirectory/audit`; each MCP connection gets a unique `connection-UUID` subdirectory. The default rotation threshold is 16 MiB, with a supported range of 4 KiB to 256 MiB.
+All three settings are optional. The default directory is `stateDirectory/audit`; each MCP connection and detached supervisor gets a unique `connection-UUID` subdirectory. The default rotation threshold is 16 MiB, with a supported range of 4 KiB to 256 MiB.
 
 To disable wrapper logging completely, set `auditLogging: false` or launch with:
 
@@ -35,7 +35,7 @@ The command-line switch overrides the configuration. Disabled logging creates no
 
 Raw stream segments concatenate in numeric suffix order to reproduce the captured bytes. Rotation can split a UTF-8 character or NDJSON line across segments; concatenate before decoding. JSON event records remain whole and can exceed the configured rotation threshold. Raw streams preserve bytes even when the in-memory parser rejects malformed output or reaches its delivery limit; capture ends when supervision stops the process.
 
-`ag_capabilities` reports `audit_logging`, `audit_connection_directory`, `audit_rotation_bytes` and `audit_auto_delete: false`. Terminal `ag_result` responses include `audit_logging`, `audit_directory` and `audit_stream_prefix`, alongside CLI exit status and duration. File references are local paths, not remotely served download links.
+`ag_capabilities` reports `audit_logging`, `audit_connection_directory`, `audit_rotation_bytes` and `audit_auto_delete: false`. A job uses its own supervisor audit directory; closing the transport does not stop its capture. Terminal `ag_result` responses include `audit_logging`, `audit_directory` and `audit_stream_prefix`, alongside CLI exit status and duration. File references are local paths, not remotely served download links.
 
 ## Scope and privacy
 
@@ -47,8 +47,8 @@ Host tasks run with the same current-user authority as the logger. They can alte
 
 ## Storage failure and cleanup
 
-When logging is enabled, an unsafe directory fails startup with `AUDIT_UNSAFE`. A write, rotation or checkpoint-sync failure triggers `AUDIT_FAILED`, stops dispatch and cancels the affected connection's supervised jobs. A broken MCP transport may prevent the client from receiving that error. Existing file changes are not rolled back, and bytes already emitted immediately before an I/O failure are not guaranteed durable.
+When logging is enabled, an unsafe directory fails startup with `AUDIT_UNSAFE`. A write, rotation or checkpoint-sync failure triggers `AUDIT_FAILED`, stops dispatch and cancels the affected supervised execution. A broken MCP transport may prevent the client from receiving that error. Existing file changes are not rolled back, and bytes already emitted immediately before an I/O failure are not guaranteed durable.
 
 Writes are synced at job lifecycle and connection checkpoints, and at rotation. Abrupt termination or power loss can still leave an incomplete tail. Restore available private storage before restarting, or explicitly start with logging disabled. The wrapper never silently disables logging after a storage error.
 
-Disk use grows with retained tasks and outputs. Stop the relevant connections before inspecting, archiving or deleting their audit directories. In-memory `retentionSeconds` controls result availability only; it does not delete audit files.
+Disk use grows with retained tasks and outputs. Stop the relevant connections before inspecting, archiving or deleting their audit directories. `retentionSeconds` and `ag_forget` control persisted result availability only; neither deletes audit files or deduplication metadata. With audit disabled, the operational job status and final report still persist so disconnected clients can retrieve their work; task inputs are not saved as replay requests.

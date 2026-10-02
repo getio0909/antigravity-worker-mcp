@@ -57,7 +57,7 @@ Initial tasks need an independent acceptance condition, such as analyzing a fixe
 
 ### 4.2 Initial release
 
-Version 0.1 provides five tools, five task categories, three execution modes, a same-host execution lock, bounded connection-local queues, paged reports and patches, cancellation, deadlines, error classification and temporary-data cleanup.
+Version 0.2 provides eight tools, five task categories, three execution modes, detached job supervisors, a shared local queue and job store, paged reports and patches, explicit cancellation, optional deadlines, idempotency and temporary-data cleanup. Tasks and results have no expiry by default.
 
 Host mode supports Linux, macOS and Windows on x86-64 and ARM64. Workspace and analysis isolation require Linux. The implementation uses Rust and the official RMCP SDK. Direct deployment requires one executable and no Node.js runtime. An optional dependency-free npm launcher supports npx on the same six targets. Default host execution operates on the original project with the current user's permissions and automatic approval. Optional workspace execution copies selected files rather than traversing an entire repository.
 
@@ -65,7 +65,7 @@ Workspace patches are returned for review and are not automatically applied. The
 
 ### 4.3 Later releases
 
-A shared job broker, cross-client result access, account-wide quota pause, Git worktrees, complete repository snapshots, persistent sessions, restart recovery, task-quality evaluation, isolation on additional operating systems and package registries are later milestones.
+Git worktrees, complete repository snapshots, persistent CLI sessions, task-quality evaluation, isolation on additional operating systems and package registries are later milestones. Durable restart observation is implemented; automatic task continuation or replay is outside scope.
 
 ## 5. Execution modes and authorization
 
@@ -73,9 +73,9 @@ A shared job broker, cross-client result access, account-wide quota pause, Git w
 | --- | --- | --- | --- | --- |
 | `host` | Default; `isolation: false`; host execution enabled by default. | Original working directory and other resources accessible to the current user. | Broad permissions; existing host environment and CLI settings apply. | Report; no automatic workspace patch. |
 | `workspace` | `isolation: true` or explicit workspace mode. | Writable copy of selected files. | Automatic approval inside Bubblewrap; networking enabled. | Report and patch. |
-| `analysis` | Explicit analysis mode. | Read-only input copy. | Commands, writes and MCP denied; URL reads use configured domains. | Report. |
+| `analysis` | Explicit analysis mode. | Read-only input copy. | Native tools and networking allowed; input writes fail at the OS mount boundary. | Report. |
 
-Host and workspace modes pass `--dangerously-skip-permissions`; they do not request per-action terminal confirmation. Headless mode alone is not an automatic-approval setting. No `agy-yolo` executable or alias is required. Non-Linux systems explicitly reject workspace and analysis requests without host fallback.
+All modes pass `--dangerously-skip-permissions`; they do not request per-action terminal confirmation. Headless mode alone is not an automatic-approval setting. No `agy-yolo` executable or alias is required. Non-Linux systems explicitly reject workspace and analysis requests without host fallback.
 
 Host execution inherits the launching environment and existing CLI configuration. `isolation` defaults to false. Setting it to true resolves host mode to workspace; explicit analysis remains read-only. An operator can disable host execution, in which case default host submissions fail explicitly. Tool-call approval in Codex or Claude Code remains controlled by that client.
 
@@ -113,7 +113,7 @@ P0 is the initial release scope. P1 and P2 are later milestones.
 
 | ID | Priority | Requirement | Acceptance |
 | --- | --- | --- | --- |
-| F-01 | P0 | Stdio initialization and discovery. | A real protocol test initializes and discovers five tools. |
+| F-01 | P0 | Stdio initialization and discovery. | A real protocol test initializes and discovers eight tools. |
 | F-02 | P0 | Asynchronous submission. | Return UUID, queued state, resolved mode and deadline. |
 | F-03 | P0 | Five task kinds and three modes. | Validate enums and reject disabled host mode before dispatch. |
 | F-04 | P0 | Bounded queues and result storage. | Reject at capacity without evicting retained results. |
@@ -125,13 +125,13 @@ P0 is the initial release scope. P1 and P2 are later milestones.
 | F-10 | P0 | Cancellation and deadlines. | Stop supervised execution and clean temporary data before terminal cancellation. |
 | F-11 | P0 | Live capability queries. | Report version, actual catalog, modes, limits and unavailable quota information. |
 | F-12 | P0 | Explicit model mapping. | Configure fast/deep profiles; reject missing profiles without substitution. |
-| F-13 | P0 | Quota pause. | A quota or capacity error prevents later dispatch in that connection. |
+| F-13 | P0 | Quota pause. | A quota or capacity error holds shared queued work until explicit resume, cancellation or an optional deadline. |
 | F-14 | P0 | Authentication reuse. | Use cached official CLI login without reading, printing or copying credential values. |
 | F-15 | P0 | Working-copy differences. | Return changes, additions and deletions; verify patch application on a synthetic sample. |
 | F-16 | P0 | Explicit isolation failure. | Reject an isolated task when isolation is unavailable; never fall back to host execution. |
-| F-17 | P1 | Shared job broker. | Both clients can query one job with shared scheduling, quota pause and cancellation. |
+| F-17 | P0 | Shared job broker. | Both clients can query one job with shared scheduling, quota pause and cancellation. |
 | F-18 | P1 | Git worktree coding. | Preserve baseline commit, existing changes and conflicts without automatic merging. |
-| F-19 | P1 | Recovery and idempotency. | Distinguish undispatched, interrupted and complete jobs; repeated keys do not create extra executions. |
+| F-19 | P0 | Recovery and idempotency. | Distinguish undispatched, interrupted and complete jobs; repeated keys do not create extra executions. |
 | F-20 | P1 | Optional execution policy. | Explicit operator configuration can enforce interpreter, path, network or tool limits; unrestricted host execution remains the default. |
 | F-21 | P2 | Persistent sessions and alternative backends. | Verify authentication, quota, context and capabilities before adding an official SDK or persistent CLI. |
 | F-22 | P2 | More platforms and registries. | Perform platform integration checks and publish a support matrix with signed artifacts or checksums. |
@@ -154,9 +154,10 @@ The [protocol reference](protocol.md) defines JSON fields and examples. Tools ex
 | `root` | String | Required for host tasks or selected files; absolute allowed root. |
 | `files` | String array | Empty by default; at most 100 relative file paths; no recursive expansion. |
 | `model_profile` | Enum | Fast by default; deep must be configured. |
-| `timeout_seconds` | Integer | 1 to 900 seconds; otherwise the server default. |
+| `timeout_seconds` | Integer | Zero disables the deadline; positive values enable a representable deadline including queue wait. Default zero; no 900-second cap. |
+| `idempotency_key` | String | Optional retry key, 1–128 UTF-8 bytes; reused only for identical task parameters. |
 
-Return `job_id`, `state: queued`, `execution_mode` and `deadline`. Timestamp fields use Unix milliseconds. Submission is not idempotent. There is no automatic task retry; callers must not repeatedly submit after losing a response.
+Return `job_id`, `state: queued`, `execution_mode` and `deadline`. Timestamp fields use Unix milliseconds. Submissions with the same key and fingerprint return one job ID, including after failure or expiry. A different task with that key fails explicitly. Without a key, response loss is ambiguous; discover existing jobs before deciding on a new submission. There is no automatic task replay.
 
 ### 8.2 ag_status
 
@@ -203,7 +204,7 @@ stateDiagram-v2
 
 Completed means execution and format validation finished. It does not mean that the host verified the model's conclusions. Failed or cancelled jobs are incomplete even if they produced partial text or changes.
 
-A busy shared lock causes lock-acquisition retries, not repeated inference. Lock fairness is not guaranteed. Jobs belong to their creating connection; another client cannot query those IDs.
+A busy execution lock causes acquisition retries, not repeated inference. Shared queued jobs dispatch in submission-time/UUID order. An unlimited task can hold the lane until completion or explicit cancellation. Other connections using the same private local state directory can query, list and cancel its ID. Terminal results win over late cancellation.
 
 ## 10. Errors and degraded behavior
 
@@ -214,7 +215,7 @@ A busy shared lock causes lock-acquisition retries, not repeated inference. Lock
 | Input scope | INPUT_SCOPE_INVALID / INPUT_FORMAT_INVALID / INPUT_TOO_LARGE / INPUT_CHANGED | Keep invalid materials out of the CLI input copy. |
 | Queue or results | QUEUE_FULL / RESULT_STORE_FULL / JOB_NOT_FOUND | Reject explicitly without removing retained results. |
 | Authentication or models | AUTH_REQUIRED / MODEL_UNAVAILABLE | Require official CLI login or configuration repair; do not switch identities or models. |
-| Quota or capacity | QUOTA_EXHAUSTED / QUOTA_PAUSED | Stop dispatch in that connection until external review and restart. |
+| Quota or capacity | QUOTA_EXHAUSTED / QUOTA_PAUSED | Hold shared queued work until external review and ag_resume; failed tasks are not replayed. |
 | Permissions or host mode | PERMISSION_DENIED / HOST_MODE_DISABLED | Mark incomplete without silently broadening execution. |
 | Lifecycle | TIMEOUT / CANCELLED | Stop supervised execution, clean temporary data and return terminal state. |
 | Stream or result | STREAM_INVALID / OUTPUT_LIMIT / RESULT_SCHEMA_INVALID / EVIDENCE_INVALID | Mark incomplete; retain validated or bounded partial information when available. |
@@ -230,7 +231,8 @@ Diagnostic text classification is a compatibility layer and needs fixtures as CL
 | Task instructions | Process memory, subprocess stdin and enabled private audit. | Runtime references released after terminal completion; audit has no automatic expiry. | Full observed task bytes in private audit, not public documents. |
 | Selected materials | Private temporary copy and enabled private audit. | Temporary copy until cleanup; audit has no automatic expiry. | Full selected bytes plus paths, SHA-256, bytes and line counts. |
 | Isolated CLI history | Private mount namespace. | Discarded when the runtime exits. | Not copied into source or reports. |
-| Reports and patches | MCP process memory. | One hour after terminal completion; cleared on disconnect. | Character pages. |
+| Reports and patches | Private shared job directory. | No automatic expiry by default; optional post-completion expiry or explicit ag_forget. | Character pages. |
+| Job metadata and hashed retry indexes | Private shared state directory. | Retained after result disposal. | Status, discovery and safe deduplication; no replay inputs. |
 | Execution lock | User-private state directory. | May remain between executions. | No task text or credential values. |
 | Host CLI history | Official CLI data directories. | Official CLI and account settings. | The wrapper does not promise to remove it. |
 | Full audit streams and results | Private per-connection audit directory. | Preserved until explicitly removed; rotation never deletes older segments. | Exact observed MCP/CLI bytes and JSON lifecycle records. |
@@ -246,20 +248,20 @@ The logger does not inspect authentication caches or dump environment values. Fu
 ```mermaid
 flowchart LR
     C[Codex / Claude Code] -->|stdio MCP| M[MCP server]
-    M --> Q[Bounded connection queue]
+    M --> Q[Shared bounded queue]
     Q --> L[Shared host lock]
     L --> E[Executor]
     E --> S[Working copy or host root]
     S --> A[Official agy CLI]
     A --> P[NDJSON parser and validator]
-    P --> R[In-memory reports and patches]
+    P --> R[Persisted reports and patches]
     R --> M
     M --> D[Private full audit]
     E --> D
     P --> D
 ```
 
-Rust, the official RMCP SDK, Tokio and Serde produce one native executable per platform and architecture. Subprocesses receive argument arrays without shell interpolation. Instructions go through stdin to keep them out of process arguments. In-memory events and diagnostics have a total output ceiling; enabled audit logging retains raw observed streams separately. Unix supervision uses process groups; Windows uses a kill-on-close Job Object assigned before task stdin is delivered.
+Rust, the official RMCP SDK, Tokio and Serde produce one native executable per platform and architecture. Subprocesses receive argument arrays without shell interpolation. Instructions go through stdin to keep them out of process arguments. Task streams have no cumulative byte ceiling. Each event is bounded at 2 MiB; final report fields and retained diagnostics remain bounded. Enabled audit logging retains raw observed streams separately. Unix supervision uses process groups; Windows uses a kill-on-close Job Object assigned before task stdin is delivered.
 
 Isolated execution needs private PID and mount namespaces. The original input root is not mounted. Document system programs, additional runtime paths and authentication mounts. Network access is not a domain firewall.
 
@@ -273,20 +275,19 @@ Protocol, scheduling, execution, input capture and validation remain separate mo
 | allowedRoots | Allowed input roots or host starting directories. | Empty array. |
 | models.fast / models.deep | Explicit model profile mapping. | Fast required; deep optional. |
 | allowHostExecution | Permit direct original-directory execution. | True. |
-| researchDomains | Analysis URL-read domains. | Empty array. |
 | runtimePaths | Additional read-only isolated toolchain directories. | Empty array. |
-| stateDirectory | Private temporary data and shared lock. | User-local state directory. |
+| stateDirectory | Private jobs, temporary data and shared locks. | User-local state directory. |
 | auditLogging | Full local wrapper audit capture. | True. |
 | auditDirectory | Private retained per-connection log directories. | `stateDirectory/audit`. |
 | auditRotateBytes | Segment threshold; JSON records remain whole. | 16 MiB; supported range 4 KiB–256 MiB. |
-| timeoutSeconds | Default deadline including queue wait. | 300 seconds. |
-| maxQueue | Maximum unfinished jobs per connection. | 8. |
-| maxJobs | Maximum retained jobs per connection. | 64. |
-| retentionSeconds | Terminal result retention. | 3,600 seconds. |
+| timeoutSeconds | Optional task deadline including queue wait. | Zero, disabled. |
+| maxQueue | Maximum unfinished jobs in shared state. | 8. |
+| maxJobs | Maximum retained results in shared state. | 64. |
+| retentionSeconds | Result retention after completion; positive values 60–604,800 seconds. | Zero, no expiry; ag_forget explicitly frees capacity. |
 
 Configuration has strict structural validation. Paths are absolute. Unix state directories belong to the current user with mode 0700. Windows defaults to the user's local application-data directory, rejects reparse-point state directories, and relies on inherited Windows ACLs rather than enforcing a custom ACL. Operators selecting another Windows state directory must restrict access appropriately. Model slugs come from the live catalog; fixed historical names are not capability discovery.
 
-Install from Cargo source builds, GitHub release executables or the release's npm tarball through npx. Native CI builds, tests and packages Linux, macOS and Windows on both x86-64 and ARM64. Version tags publish six native archives, one npm launcher tarball and SHA-256 checksums after every target succeeds. Prebuilt Linux executables require glibc 2.35 or newer. Default host mode needs an authenticated `agy`. Bubblewrap and working user namespaces are Linux-only isolation requirements; Git is needed for workspace patches. Version 0.1 does not require a cloud daemon. Each client launches a stdio process, with shared locking when instances use the same state directory.
+Install from Cargo source builds, GitHub release executables or the release's npm tarball through npx. Native CI builds, tests and packages Linux, macOS and Windows on both x86-64 and ARM64. Version tags publish six native archives, one npm launcher tarball and SHA-256 checksums after every target succeeds. Prebuilt Linux executables require glibc 2.35 or newer. Default host mode needs an authenticated `agy`. Bubblewrap and working user namespaces are Linux-only isolation requirements; Git is needed for workspace patches. Version 0.2 requires no installed daemon. Each client launches a stdio adapter; each accepted task owns a detached supervisor and shared persisted state. Windows hosts that forbid Job Object breakaway fail background launch explicitly.
 
 The optional launcher requires Node.js 20.11 or newer and npm. It selects the platform/architecture, fetches immutable versioned GitHub release assets, checks the archive SHA-256 before extraction, and atomically installs a per-user version/target cache. Cache hits verify the executable hash. Diagnostics use stderr; arguments, cwd, environment and stdio pass through without MCP parsing. Checksums depend on trust in the GitHub release publisher and HTTPS; they are not detached signatures. Unix extraction uses tar; Windows uses PowerShell. Registry publication remains separate from the working release-tarball entry point.
 
@@ -313,7 +314,7 @@ Model-quality evaluation is separate from engineering checks. One successful req
 
 | ID | Scenario | Required outcome |
 | --- | --- | --- |
-| A-01 | Initialization and discovery. | Five tools available; server stdout contains only protocol messages. |
+| A-01 | Initialization and discovery. | Eight tools available; server stdout contains only protocol messages. |
 | A-02 | Standard task. | Submission, status, complete structured report and page reconstruction work. |
 | A-03 | Official CLI. | A small real-model task records CLI status, actual model and usage. |
 | A-04 | Workspace edits. | Changes and new files generate an applicable patch; original input bytes remain unchanged. |
@@ -347,7 +348,7 @@ Contributors run compilation, lint, tests, format and package-content checks. CI
 
 | Milestone | Deliverables | Completion |
 | --- | --- | --- |
-| M0: experimental 0.1 | Five tools, host/workspace/analysis modes, lifecycle, reports, patches and complete public project. | Engineering tests and small official CLI checks pass; verification gaps are published; source and artifacts are accessible. |
+| M0: experimental 0.1 | Eight tools, host/workspace/analysis modes, lifecycle, reports, patches and complete public project. | Engineering tests and small official CLI checks pass; verification gaps are published; source and artifacts are accessible. |
 | M1: shared broker and coding | Cross-client jobs, account-wide pause, worktrees, broader input strategies and command policies. | Concurrent-client, recovery, conflict and runtime-policy cases pass. |
 | M2: evaluation and platforms | Task benchmarks, profile selection, persistent sessions, more platforms and registries. | Publish reproducible results, platform acceptance and migration/maintenance procedures. |
 
@@ -362,10 +363,10 @@ Milestones do not assign speculative release dates or model-quality scores. Comp
 | A report omits autonomous working steps. | Full observed tool trace and independent change inspection; reports remain unverified. | The wrapper does not restrict individual host-tool actions through added task instructions. |
 | Full logs grow or expose private materials. | Private directories, complete off switch, rotation and storage-failure cancellation. | No automatic deletion; same-user tasks can alter logs; operators control archival and access. |
 | Hostile materials induce commands or disclosure. | Original input root absent from isolation, generated settings, selected input scope. | Network and authentication mounts still require trusted tasks; no exfiltration guarantee. |
-| Quota and charges are unpredictable. | Shared host lock, finite deadlines, no inference retries and connection quota pause. | Existing account overage applies; remaining quota is unknown. |
+| Quota and charges are unpredictable. | Shared host lock, optional deadlines, no inference retries and shared quota pause. | Existing account overage applies; remaining quota is unknown. |
 | Well-formed reports contain wrong conclusions. | Unverified status, source-location bounds and patch applicability checks. | Semantic correctness needs host verification and task evaluation. |
-| Jobs or results are lost. | Explicit connection ownership, retention and errors. | No durable recovery, idempotency or cross-client lookup in 0.1. |
-| Commands exhaust disk or compute. | Input/output bounds, cleanup and finite supervised execution. | Arbitrary commands need cgroups or quotas for hard CPU, memory and disk limits. |
+| Jobs or results are lost. | Detached supervision, persisted results, idempotency and explicit interrupted state. | No automatic continuation after a crash or reboot. |
+| Commands exhaust disk or compute. | Input/output bounds, cleanup and explicit cancellation. | Arbitrary commands need cgroups or quotas for hard CPU, memory and disk limits. |
 
 ## 19. Public references
 
@@ -377,3 +378,13 @@ Community implementations provide comparison points for queues, CLI adaptation a
 - [Official Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk): protocol implementation.
 
 These are references, not Google-operated MCP services or runtime dependencies. Read current upstream source and verify behavior before adopting additional capabilities.
+
+## 17. Background execution acceptance
+
+Accepted jobs must survive transport closure and permit fresh connections to inspect the same ID. Verify actual provider execution, preserved audit streams and final host effects separately from fixture checks. A task lasting beyond the former 900-second ceiling must complete with the native CLI timeout disabled. No automatic inactivity cutoff may replace the removed task deadline.
+
+Cancellation must cover supervised descendants and preserve already completed reports. FIFO waiting and provider pause must remain cancellable. Crash reconciliation must report interrupted work without signalling unverified saved PIDs or replaying instructions. Disk failures must request supervised cleanup even when a failure checkpoint cannot be written.
+
+The supervisor inherits the submitting user session. Verify Windows desktop authentication and breakaway behavior in both clients; SSH-only startup is insufficient. Optional isolated analysis must permit read/navigation/command tools and provide a writable helper cache while preserving read-only selected inputs. No isolation request may silently become host execution.
+
+Upgrade from 0.1 requires removing the obsolete researchDomains configuration field. Analysis now allows native network tools inside its OS boundary. Set timeoutSeconds and retentionSeconds to zero to use the new defaults in existing configuration files.

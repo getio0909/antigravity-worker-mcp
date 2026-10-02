@@ -30,14 +30,17 @@ pub struct EventParser {
 }
 impl EventParser {
     pub fn push(&mut self, bytes: &[u8]) -> Outcome<()> {
-        self.progress.output_bytes += bytes.len();
-        if self.progress.output_bytes > MAX_OUTPUT {
-            return Err(Failure::new("OUTPUT_LIMIT", "CLI output exceeded 2 MiB."));
-        }
+        self.progress.output_bytes = self.progress.output_bytes.saturating_add(bytes.len());
         self.pending.extend_from_slice(bytes);
         while let Some(end) = self.pending.iter().position(|&b| b == b'\n') {
+            if end > MAX_OUTPUT {
+                return Err(Failure::new("OUTPUT_LIMIT", "A CLI event exceeded 2 MiB."));
+            }
             let line: Vec<_> = self.pending.drain(..=end).collect();
             self.line(&line)?;
+        }
+        if self.pending.len() > MAX_OUTPUT {
+            return Err(Failure::new("OUTPUT_LIMIT", "A CLI event exceeded 2 MiB."));
         }
         Ok(())
     }
@@ -64,9 +67,15 @@ impl EventParser {
                 self.progress.steps += 1;
                 if let Some(error) = v["step_update"]["tool_info"].get("error") {
                     let s = error.to_string().to_lowercase();
-                    if ["denied", "permission", "not allowed"]
-                        .iter()
-                        .any(|p| s.contains(p))
+                    if [
+                        "denied",
+                        "permission",
+                        "not allowed",
+                        "read-only file system",
+                        "operation not permitted",
+                    ]
+                    .iter()
+                    .any(|p| s.contains(p))
                     {
                         self.denied = true;
                     }
@@ -97,6 +106,13 @@ pub struct ProcessOutput {
 }
 pub type ProgressCallback = Arc<dyn Fn(Progress) + Send + Sync>;
 
+pub async fn wait_timeout(timeout: Option<Duration>) {
+    match timeout {
+        Some(timeout) => tokio::time::sleep(timeout).await,
+        None => std::future::pending::<()>().await,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn process(
     command: &Path,
@@ -113,7 +129,7 @@ pub async fn process(
         args,
         cwd,
         stdin,
-        timeout,
+        Some(timeout),
         cancel,
         progress,
         inherit_environment,
@@ -127,7 +143,7 @@ async fn process_with_capture(
     args: &[OsString],
     cwd: Option<&Path>,
     stdin: Option<String>,
-    timeout: Duration,
+    timeout: Option<Duration>,
     cancel: &CancellationToken,
     progress: Option<ProgressCallback>,
     inherit_environment: bool,
@@ -173,6 +189,19 @@ async fn process_with_capture(
     }
     #[cfg(unix)]
     cmd.process_group(0);
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let supervisor = std::process::id() as libc::pid_t;
+        cmd.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() != supervisor {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
     #[cfg(windows)]
     cmd.creation_flags(0x00000200);
     let mut child = cmd.spawn().map_err(|_| {
@@ -220,6 +249,7 @@ async fn process_with_capture(
     let total = Arc::new(AtomicUsize::new(0));
     let failure = Arc::new(Mutex::new(None::<Failure>));
     let notify = Arc::new(Notify::new());
+    let streaming = progress.is_some();
     let out_task = reader(
         child.stdout.take().unwrap(),
         total.clone(),
@@ -227,6 +257,7 @@ async fn process_with_capture(
         notify.clone(),
         progress,
         true,
+        streaming,
         capture.clone(),
     );
     let err_task = reader(
@@ -236,6 +267,7 @@ async fn process_with_capture(
         notify.clone(),
         None,
         false,
+        streaming,
         capture.clone(),
     );
     let audit_failed = capture
@@ -246,7 +278,7 @@ async fn process_with_capture(
         s = child.wait() => s.map_err(io_failure),
         _ = cancel.cancelled() => { interrupted = Some(Failure::new("CANCELLED", "Task was cancelled.")); Err(interrupted.clone().unwrap()) },
         _ = audit_failed.cancelled() => { interrupted = Some(Failure::new("AUDIT_FAILED", "Full audit logging failed; execution was stopped.")); Err(interrupted.clone().unwrap()) },
-        _ = tokio::time::sleep(timeout) => { interrupted = Some(Failure::new("TIMEOUT", "Task deadline elapsed; execution was terminated.")); Err(interrupted.clone().unwrap()) },
+        _ = wait_timeout(timeout) => { interrupted = Some(Failure::new("TIMEOUT", "Task deadline elapsed; execution was terminated.")); Err(interrupted.clone().unwrap()) },
         _ = notify.notified() => { interrupted = failure.lock().unwrap().clone(); Err(interrupted.clone().unwrap_or_else(|| Failure::new("STREAM_INVALID", "Output failed validation."))) },
     };
     if interrupted.is_some() || status.is_err() {
@@ -293,6 +325,7 @@ async fn process_with_capture(
         parser: out.1,
     })
 }
+#[allow(clippy::too_many_arguments)]
 fn reader<R: AsyncRead + Unpin + Send + 'static>(
     mut stream: R,
     total: Arc<AtomicUsize>,
@@ -300,6 +333,7 @@ fn reader<R: AsyncRead + Unpin + Send + 'static>(
     notify: Arc<Notify>,
     callback: Option<ProgressCallback>,
     stdout: bool,
+    streaming: bool,
     capture: Option<Capture>,
 ) -> tokio::task::JoinHandle<(Vec<u8>, EventParser)> {
     tokio::spawn(async move {
@@ -316,7 +350,8 @@ fn reader<R: AsyncRead + Unpin + Send + 'static>(
                 a.bytes(if stdout { "stdout" } else { "stderr" }, bytes)
                     .err()
             });
-            let too_large = total.fetch_add(count, Ordering::Relaxed) + count > MAX_OUTPUT;
+            let too_large =
+                !streaming && total.fetch_add(count, Ordering::Relaxed) + count > MAX_OUTPUT;
             let error = if audit_error.is_some() {
                 audit_error
             } else if too_large {
@@ -466,7 +501,8 @@ pub fn sandbox(
                 "CLI cache must be a regular directory.",
             ));
         }
-        bind(&mut args, "--ro-bind", &bin, &bin);
+        arg(&mut args, &["--tmpfs"]);
+        args.push(bin.as_os_str().into());
     }
     for path in &config.runtime_paths {
         bind(&mut args, "--ro-bind", path, path);
@@ -482,31 +518,8 @@ pub fn sandbox(
     arg(&mut args, &["--chdir", "/work", "--"]);
     Ok(args)
 }
-fn settings(config: &Config, mode: Mode) -> Value {
-    if mode == Mode::Analysis {
-        let allow = std::iter::once("read_file(/work)".into())
-            .chain(
-                config
-                    .research_domains
-                    .iter()
-                    .map(|d| format!("read_url({d})")),
-            )
-            .collect::<Vec<String>>();
-        let mut deny = vec![
-            "write_file(*)".into(),
-            "command(*)".into(),
-            "unsandboxed(*)".into(),
-            "execute_url(*)".into(),
-            "mcp(*)".into(),
-            format!("read_file({})", config.home.display()),
-        ];
-        if config.research_domains.is_empty() {
-            deny.push("read_url(*)".into());
-        }
-        json!({"toolPermission":"strict","allowNonWorkspaceAccess":false,"enableTelemetry":false,"mcpServers":{},"permissions":{"allow":allow,"deny":deny,"ask":[]}})
-    } else {
-        json!({"toolPermission":"always-proceed","allowNonWorkspaceAccess":true,"enableTelemetry":false,"mcpServers":{},"permissions":{"allow":["read_file(*)","write_file(*)","command(*)","read_url(*)"],"deny":[],"ask":[]}})
-    }
+fn settings() -> Value {
+    json!({"toolPermission":"always-proceed","allowNonWorkspaceAccess":true,"enableTelemetry":false,"mcpServers":{},"permissions":{"allow":["read_file(*)","write_file(*)","command(*)","read_url(*)","execute_url(*)","unsandboxed(*)"],"deny":[],"ask":[]}})
 }
 #[cfg(target_os = "linux")]
 pub async fn check() -> Outcome<()> {
@@ -572,7 +585,7 @@ pub async fn capabilities(
         &args,
         None,
         None,
-        Duration::from_secs(10),
+        Some(Duration::from_secs(10)),
         cancel,
         None,
         true,
@@ -585,7 +598,7 @@ pub async fn capabilities(
         &args,
         None,
         None,
-        Duration::from_secs(20),
+        Some(Duration::from_secs(20)),
         cancel,
         None,
         true,
@@ -615,9 +628,9 @@ pub async fn capabilities(
         json!({"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"isolation_supported":cfg!(target_os="linux"),"cli_version":if version.code==Some(0){Some(version.stdout.trim())}else{None},"models":catalog,
         "models_error":if models.code==Some(0){None}else{Some(classify(&models.stderr).code)},"configured_profiles":config.models,
         "execution_modes":supported_modes(config.allow_host_execution),
-        "default_execution_mode":"host","default_isolation":false,"skip_permissions":{"workspace":true,"analysis":false,"host":true},"concurrency":1,"lock_scope":"same stateDirectory on one host",
+        "default_execution_mode":"host","default_isolation":false,"skip_permissions":{"workspace":true,"analysis":true,"host":true},"default_timeout_seconds":config.timeout_seconds,"concurrency":1,"lock_scope":"same stateDirectory on one host",
         "quota":{"available":false,"reason":"No stable quota API; token usage is not remaining plan quota."},
-        "limits":{"max_queue":config.max_queue,"max_jobs":config.max_jobs,"files":100,"file_bytes":262144,"input_bytes":4194304,"output_bytes":MAX_OUTPUT}}),
+        "limits":{"max_queue":config.max_queue,"max_jobs":config.max_jobs,"files":100,"file_bytes":262144,"input_bytes":4194304,"event_bytes":MAX_OUTPUT,"total_stream_bytes":null}}),
     )
 }
 fn supported_modes(host: bool) -> Vec<&'static str> {
@@ -633,7 +646,7 @@ fn supported_modes(host: bool) -> Vec<&'static str> {
 pub async fn execute(
     config: &Config,
     input: &Submission,
-    timeout: Duration,
+    timeout: Option<Duration>,
     cancel: &CancellationToken,
     progress: ProgressCallback,
     capture: Capture,
@@ -660,7 +673,7 @@ pub async fn execute(
 async fn execute_inner(
     config: &Config,
     input: &Submission,
-    timeout: Duration,
+    timeout: Option<Duration>,
     cancel: &CancellationToken,
     progress: ProgressCallback,
     result: &mut RunResult,
@@ -687,11 +700,7 @@ async fn execute_inner(
     }
     let settings_path = dir.path().join("settings.json");
     if input.execution_mode != Mode::Host {
-        fs::write(
-            &settings_path,
-            settings(config, input.execution_mode).to_string(),
-        )
-        .map_err(io_failure)?;
+        fs::write(&settings_path, settings().to_string()).map_err(io_failure)?;
     }
     let host_root = if input.execution_mode == Mode::Host {
         Some(snapshot::allowed_root(config, input.root.as_deref())?)
@@ -717,22 +726,18 @@ async fn execute_inner(
         "--model".into(),
         result.model.clone().into(),
         "--mode".into(),
-        if input.execution_mode == Mode::Analysis {
-            "plan".into()
-        } else {
-            "accept-edits".into()
-        },
+        "accept-edits".into(),
         "--print-timeout".into(),
-        format!("{}s", timeout.as_secs().max(1)).into(),
+        timeout
+            .map_or_else(|| "0".into(), |v| format!("{}s", v.as_secs().max(1)))
+            .into(),
         "--json-schema".into(),
         serde_json::to_string(&schema).map_err(io_failure)?.into(),
     ]);
     if input.execution_mode != Mode::Host {
         args.push("--disable-slash-commands".into());
     }
-    if input.execution_mode != Mode::Analysis {
-        args.push("--dangerously-skip-permissions".into());
-    }
+    args.push("--dangerously-skip-permissions".into());
     let request = format!(
         "Task type: {:?}. Execution mode: {:?}.\nWorkspace: {}.\nSelected files: {}\n\nTask:\n{}\n\nFinal report format: JSON matching the supplied schema, with summary (string), findings (array of objects), and limitations (array of strings). Findings contain title, detail, severity (info/low/medium/high), and evidence (array). Evidence entries contain file, line, url, and excerpt; use null for absent file, line, or url. An empty findings array is valid.",
         input.kind,
@@ -828,7 +833,7 @@ async fn execute_inner(
             &args,
             Some(dir.path()),
             None,
-            Duration::from_secs(5),
+            Some(Duration::from_secs(5)),
             cancel,
             None,
             false,
@@ -856,6 +861,19 @@ async fn execute_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn long_stream_has_no_cumulative_output_limit() {
+        let mut parser = EventParser::default();
+        let event = json!({"event":"step_update","step_update":{"text_delta":"x".repeat(8192)}})
+            .to_string()
+            + "\n";
+        for _ in 0..400 {
+            parser.push(event.as_bytes()).unwrap();
+        }
+        parser.finish().unwrap();
+        assert!(parser.progress.output_bytes > MAX_OUTPUT);
+        assert_eq!(parser.progress.steps, 400);
+    }
     #[test]
     fn split_utf8_and_duplicate_result() {
         let bytes =

@@ -41,6 +41,10 @@ pub fn unchanged(before: &fs::Metadata, after: &fs::Metadata) -> bool {
 }
 
 pub fn lock(config: &crate::model::Config) -> Outcome<Option<fs::File>> {
+    lock_path(&config.state_directory.join("execution.lock"))
+}
+
+pub fn lock_path(path: &Path) -> Outcome<Option<fs::File>> {
     let mut options = fs::OpenOptions::new();
     options.create(true).truncate(false).read(true).write(true);
     #[cfg(unix)]
@@ -50,9 +54,7 @@ pub fn lock(config: &crate::model::Config) -> Outcome<Option<fs::File>> {
         use std::os::windows::fs::OpenOptionsExt;
         options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
     }
-    let file = options
-        .open(config.state_directory.join("execution.lock"))
-        .map_err(io_failure)?;
+    let file = options.open(path).map_err(io_failure)?;
     let meta = file.metadata().map_err(io_failure)?;
     if !meta.is_file() || !is_private(&meta) {
         return Err(Failure::new(

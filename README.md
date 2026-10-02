@@ -6,13 +6,13 @@
 
 A Rust MCP worker for the official Google Antigravity CLI. Codex, Claude Code, and other stdio MCP clients can submit background tasks, check status, read reports, and cancel execution. Run the standalone executable or use the optional npm launcher.
 
-**Default: no isolation, full current-user permissions, automatic execution.** Tasks run in the original configured workspace with `--dangerously-skip-permissions`. Set **`isolation: true`** for a separate working copy, or select **`execution_mode: "analysis"`** for read-only inputs.
+**Default: no isolation, full current-user permissions, automatic execution, no task deadline.** Tasks run in the original configured workspace with `--dangerously-skip-permissions`. Set **`isolation: true`** for a separate working copy, or select **`execution_mode: "analysis"`** for read-only inputs.
 
 Headless mode by itself does not approve every tool action. The wrapper passes the explicit automatic-approval flag to the official `agy`; no `agy-yolo` alias or separate executable is required.
 
 **Full local audit logging is also enabled by default.** It retains MCP requests/responses, selected inputs, CLI streams and terminal results after shutdown. Logs rotate without automatic deletion. Use `--no-audit` or `auditLogging: false` to disable wrapper logging completely. See [audit logging](docs/audit.md) for storage, privacy and failure behavior.
 
-Version 0.1 is experimental. It uses your installed `agy` and cached login on Linux, macOS or Windows. This community project has no Google affiliation and does not implement Google's private model APIs or change account overage settings.
+Version 0.2 is experimental. It uses your installed `agy` and cached login on Linux, macOS or Windows. This community project has no Google affiliation and does not implement Google's private model APIs or change account overage settings.
 
 ## Why this exists
 
@@ -35,8 +35,8 @@ CI runs native compilation, lint, tests and packaging for all six targets. Linux
 The release includes an npm package that works without an npm registry publication. With Node.js 20.11 or newer and npm installed:
 
 ```bash
-npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.2/antigravity-worker-mcp-0.1.2.tgz antigravity-worker-mcp --version
-npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.2/antigravity-worker-mcp-0.1.2.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.0/antigravity-worker-mcp-0.2.0.tgz antigravity-worker-mcp --version
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.0/antigravity-worker-mcp-0.2.0.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
 ```
 
 The dependency-free Node launcher downloads the matching Rust archive, verifies its release SHA-256, and caches the extracted executable and documentation. Later launches verify the cached executable before using it. Arguments, working directory, environment and stdin/stdout pass through to Rust; download messages use stderr. The official `agy` still needs a separate installation and login. Unix extraction requires `tar`; Windows uses PowerShell. Linux musl systems and older glibc need a source build.
@@ -83,8 +83,8 @@ claude mcp add --scope user antigravity-worker -- /absolute/path/antigravity-wor
 Or register the npm launcher on Linux/macOS:
 
 ```bash
-codex mcp add antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.2/antigravity-worker-mcp-0.1.2.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
-claude mcp add --scope user antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.2/antigravity-worker-mcp-0.1.2.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+codex mcp add antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.0/antigravity-worker-mcp-0.2.0.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+claude mcp add --scope user antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.0/antigravity-worker-mcp-0.2.0.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
 ```
 
 On Windows, register `cmd /c npx` in place of `npx` so the MCP host can launch npm's command shim. Run the `--version` command once before registration to populate the native executable cache.
@@ -109,7 +109,10 @@ The [verification record](docs/verification.md) distinguishes tested MCP protoco
 | `ag_submit` | Queue a task and return its ID without waiting for the model. |
 | `ag_status` | Read state, deadlines, progress counters and failure indicators. |
 | `ag_result` | Read an unverified report or patch in character pages. |
-| `ag_cancel` | Cancel and wait for supervised runtime termination and cleanup. |
+| `ag_cancel` | Request cancellation; report whether supervised cleanup finished. |
+| `ag_list` | Find shared job IDs and page their status metadata. |
+| `ag_resume` | Clear a shared quota pause after checking provider availability. |
+| `ag_forget` | Discard a terminal result while preserving audit logs and deduplication. |
 | `ag_capabilities` | Query CLI version, live model catalog, permission modes and limits. |
 
 Default automatic execution:
@@ -121,7 +124,8 @@ Default automatic execution:
   "instructions": "Implement the scoped change and report the checks performed.",
   "isolation": false,
   "model_profile": "fast",
-  "timeout_seconds": 300
+  "timeout_seconds": 0,
+  "idempotency_key": "scoped-change-001"
 }
 ```
 
@@ -137,6 +141,8 @@ Optional working copy:
 }
 ```
 
+`timeout_seconds: 0` disables the deadline. Omit it to use `timeoutSeconds`, which defaults to zero. A positive value enables an optional deadline including queue time, with no 900-second cap. A client tool-call timeout covers each control request, not the background task. Supply the same `idempotency_key` when retrying an uncertain submission; a different task with that key is rejected.
+
 Follow `next_offset` in `ag_result`; use `section: "patch"` for the working-copy patch. Review the complete patch before applying it. All model reports carry `verification_status: "unverified"`; the host agent must verify findings and test claims.
 
 Isolated mode copies only selected UTF-8 files, up to 100 files, 256 KiB each and 4 MiB total. It does not copy the complete repository, `.git`, local settings, secrets or installed dependencies. Include materials needed for checks and use `runtimePaths` to mount additional toolchain directories read-only. Host mode can use the original full project.
@@ -147,19 +153,19 @@ Isolated mode copies only selected UTF-8 files, up to 100 files, 256 KiB each an
 | --- | --- | --- | --- |
 | `host` (default, `isolation: false`) | Original directory and current-user host access | Enabled; inherits launch environment and CLI settings | Enabled |
 | `workspace` (`isolation: true`) | Writable copy of selected files | Enabled inside Bubblewrap | Enabled |
-| `analysis` | Read-only copy | Commands denied; URL reads limited by configured domains | Disabled |
+| `analysis` | Read-only input copy; writable scratch space | Enabled inside Bubblewrap | Enabled |
 
 Workspace and analysis modes require Linux. macOS and Windows reject isolation requests with `ISOLATION_UNSUPPORTED`; they do not silently run them on the host.
 
 `allowHostExecution` defaults to true. Set it to false to reject host tasks. The host root allowlist validates the starting directory, not paths later accessed by commands. Client-side tool approval remains controlled by the MCP host.
 
-Isolated execution keeps the original project outside the mount namespace, but exposes system programs, configured runtimes, network access and the CLI's read-only authentication file. It is not a network firewall or an exfiltration barrier against hostile tasks. Host cancellation covers the supervised CLI and process group; detached services and external side effects can remain.
+Isolated execution keeps the original project outside the mount namespace, but exposes system programs, configured runtimes, network access and the CLI's read-only authentication file. It is not a network firewall or an exfiltration barrier against hostile tasks. Host cancellation covers the supervised CLI and process group; detached services and external side effects can remain. A runner crash or reboot is reported as interrupted work, without automatic replay. Windows launchers that forbid Job Object breakaway receive `BACKGROUND_UNAVAILABLE`; detached mode does not silently become connection-bound execution.
 
-Results stay in memory, expire after one hour by default, and clear when the connection closes. Full audit logs persist independently in the private state directory; they include task instructions and observed tool output. Isolated CLI history is temporary. Default host mode uses the official CLI's normal history and retention settings. Disabling wrapper logs does not change client, CLI or provider retention.
+Jobs run in detached supervisor processes and survive the submitting client disconnecting. Clients using the same private `stateDirectory` can query or cancel the same job. Reports and patches are stored locally and do not expire by default. `retentionSeconds` can enable expiry; `ag_forget` frees a terminal result slot without removing audit logs or its idempotency record. `maxJobs` bounds retained results, so a full store rejects new submissions instead of silently deleting reports. Full audit logs persist independently in the private state directory; they include task instructions and observed tool output. Isolated CLI history is temporary. Default host mode uses the official CLI's normal history and retention settings. Disabling wrapper logs does not change client, CLI or provider retention.
 
 The underlying CLI is an autonomous agent. The wrapper adds input context and a final report format, without extra behavioral instructions or a host-tool allowlist. The agent chooses its commands, reads and working steps. Audit logs record those actions; they do not veto them. Reports remain `unverified`; inspect actual results and side effects.
 
-Instances sharing one `stateDirectory` share one execution lock and serialize CLI jobs. Each connection owns its queue and results. Different directories or machines have independent locks. Quota/capacity failures pause dispatch only in the affected connection. Token usage is reported when available; remaining subscription quota is unknown.
+Instances sharing one `stateDirectory` share one execution lock and serialize CLI jobs. The queue, results and quota pause are shared. Scheduling follows submission order. Different directories or machines have independent locks. Quota/capacity failures hold queued jobs until explicit `ag_resume`; failed jobs are never replayed. Token usage is reported when available; remaining subscription quota is unknown.
 
 ## Development
 

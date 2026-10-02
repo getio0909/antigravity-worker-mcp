@@ -356,7 +356,7 @@ async fn real_stdio_discovery_paging_and_shutdown() {
     ]);
     let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
     let tools = client.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 5);
+    assert_eq!(tools.len(), 8);
     assert!(tools.iter().any(|t| t.name == "ag_submit"));
     let caps = client
         .call_tool(CallToolRequestParams::new("ag_capabilities"))
@@ -565,5 +565,198 @@ async fn audit_rotation_preserves_every_byte_and_log_failure_stops_execution() {
     assert_eq!(before, fs::read(&sentinel).unwrap());
     assert!(worker.audit.has_failed());
     worker.shutdown().await;
+    c.worker.shutdown().await;
+}
+
+#[tokio::test]
+async fn detached_jobs_survive_reconnection_and_accept_unlimited_duration() {
+    use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
+    let c = Context::new(8);
+    let connect = || {
+        let mut command =
+            tokio::process::Command::new(env!("CARGO_BIN_EXE_antigravity-worker-mcp"));
+        command.args([
+            "--config",
+            c.dir.path().join("config.json").to_str().unwrap(),
+        ]);
+        async move { ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap() }
+    };
+    let first = connect().await;
+    let arguments = json!({"kind":"review","instructions":"CASE:delay CASE:unlimited","root":c.dir.path().join("source"),"idempotency_key":"reconnection-test"});
+    let submitted = first
+        .call_tool(
+            CallToolRequestParams::new("ag_submit")
+                .with_arguments(arguments.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let id = submitted["job_id"].as_str().unwrap().to_owned();
+    assert_eq!(submitted["deadline"], Value::Null);
+    assert_eq!(submitted["background"], true);
+    first.cancel().await.unwrap();
+    let second = connect().await;
+    let duplicate = second
+        .call_tool(
+            CallToolRequestParams::new("ag_submit")
+                .with_arguments(arguments.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(duplicate["job_id"], id);
+    assert_eq!(duplicate["deduplicated"], true);
+    let mut finished = None;
+    for _ in 0..150 {
+        let result = second
+            .call_tool(
+                CallToolRequestParams::new("ag_result")
+                    .with_arguments(json!({"job_id":id}).as_object().unwrap().clone()),
+            )
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        if result["ready"] == true {
+            finished = Some(result);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        finished.as_ref().unwrap()["state"],
+        "completed",
+        "{finished:?}"
+    );
+    assert_eq!(finished.as_ref().unwrap()["process_stopped"], true);
+    let mut conflict = arguments;
+    conflict["instructions"] = "different task".into();
+    let conflict = second
+        .call_tool(
+            CallToolRequestParams::new("ag_submit")
+                .with_arguments(conflict.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(conflict["error"]["code"], "IDEMPOTENCY_CONFLICT");
+    let submitted=second.call_tool(CallToolRequestParams::new("ag_submit").with_arguments(json!({"kind":"review","instructions":"CASE:child","root":c.dir.path().join("source"),"timeout_seconds":0}).as_object().unwrap().clone())).await.unwrap().structured_content.unwrap();
+    let long = submitted["job_id"].as_str().unwrap().to_owned();
+    second.cancel().await.unwrap();
+    let sentinel = c.dir.path().join("source/child-alive.txt");
+    for _ in 0..100 {
+        if sentinel.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(sentinel.exists());
+    let third = connect().await;
+    let listed = third
+        .call_tool(
+            CallToolRequestParams::new("ag_list")
+                .with_arguments(json!({"limit":1}).as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(listed["jobs"].as_array().unwrap().len(), 1);
+    assert!(listed["next_after"].is_string());
+    let cancelled = third
+        .call_tool(
+            CallToolRequestParams::new("ag_cancel")
+                .with_arguments(json!({"job_id":long}).as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(cancelled["state"], "cancelled");
+    assert_eq!(cancelled["process_stopped"], true);
+    let stopped = fs::read(&sentinel).unwrap();
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert_eq!(fs::read(&sentinel).unwrap(), stopped);
+    let audit = std::path::PathBuf::from(
+        finished.as_ref().unwrap()["audit_directory"]
+            .as_str()
+            .unwrap(),
+    );
+    let bytes = audit_bytes(&audit, &format!("job-{id}.cli.stdout"));
+    assert!(String::from_utf8(bytes).unwrap().contains("SUCCESS"));
+    third.cancel().await.unwrap();
+    c.worker.shutdown().await;
+}
+
+#[tokio::test]
+async fn shared_quota_pause_keeps_waiting_jobs_and_disposal_preserves_keys() {
+    use antigravity_worker_mcp::broker::Broker;
+    let c = Context::new(8);
+    let broker = Broker::new(
+        c.worker.config.clone(),
+        env!("CARGO_BIN_EXE_antigravity-worker-mcp").into(),
+        c.worker.audit.clone(),
+    )
+    .unwrap();
+    let input = |text: &str, key: &str, timeout: u64| {
+        serde_json::from_value(json!({"kind":"review","instructions":text,"root":c.dir.path().join("source"),"idempotency_key":key,"timeout_seconds":timeout})).unwrap()
+    };
+    let first = broker
+        .submit(input("CASE:quota", "quota", 0))
+        .await
+        .unwrap();
+    let id = first["job_id"].as_str().unwrap();
+    for _ in 0..100 {
+        if broker.status(id).unwrap()["state"] == "failed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        broker.result(id, 0, 1000, false).unwrap()["error"]["code"],
+        "QUOTA_EXHAUSTED"
+    );
+    assert_eq!(
+        broker
+            .submit(input("fixture", "blocked", 0))
+            .await
+            .unwrap_err()
+            .code,
+        "QUOTA_PAUSED"
+    );
+    broker.resume().await.unwrap();
+    let long = broker
+        .submit(input("CASE:wait", "long", 3601))
+        .await
+        .unwrap();
+    let long = long["job_id"].as_str().unwrap();
+    let queued = broker.submit(input("fixture", "waiting", 0)).await.unwrap();
+    let queued = queued["job_id"].as_str().unwrap();
+    fs::write(c.worker.config.state_directory.join("dispatch.pause"), "{}").unwrap();
+    broker.cancel(long).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(broker.status(queued).unwrap()["state"], "queued");
+    assert_eq!(broker.forget(queued).await.unwrap_err().code, "JOB_ACTIVE");
+    broker.resume().await.unwrap();
+    for _ in 0..100 {
+        if broker.status(queued).unwrap()["state"] == "completed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(broker.status(queued).unwrap()["state"], "completed");
+    broker.forget(queued).await.unwrap();
+    assert_eq!(
+        broker.result(queued, 0, 1000, false).unwrap_err().code,
+        "RESULT_EXPIRED"
+    );
+    let duplicate = broker.submit(input("fixture", "waiting", 0)).await.unwrap();
+    assert_eq!(duplicate["job_id"], queued);
+    assert_eq!(duplicate["deduplicated"], true);
+    assert_eq!(duplicate["result_expired"], true);
+    assert_eq!(broker.cancel(queued).await.unwrap()["state"], "completed");
     c.worker.shutdown().await;
 }

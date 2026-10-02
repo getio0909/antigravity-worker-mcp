@@ -3,14 +3,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Failure {
-    pub code: &'static str,
-    pub message: &'static str,
+    pub code: String,
+    pub message: String,
 }
 impl Failure {
     pub fn new(code: &'static str, message: &'static str) -> Self {
-        Self { code, message }
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
     }
 }
 pub type Outcome<T> = Result<T, Failure>;
@@ -59,7 +62,10 @@ pub struct Submission {
     pub files: Vec<String>,
     #[serde(default)]
     pub model_profile: Profile,
+    /// Zero disables the deadline. Omitted values use timeoutSeconds, which defaults to zero.
     pub timeout_seconds: Option<u64>,
+    /// Reuse a key when retrying the same submission after losing its acknowledgement.
+    pub idempotency_key: Option<String>,
 }
 impl Submission {
     pub fn resolve_mode(&mut self) {
@@ -72,7 +78,10 @@ impl Submission {
             || self.instructions.chars().count() > 16000
             || self.files.len() > 100
             || self.files.iter().any(|p| p.chars().count() > 512)
-            || self.timeout_seconds.is_some_and(|v| v == 0 || v > 900)
+            || self
+                .idempotency_key
+                .as_ref()
+                .is_some_and(|v| v.is_empty() || v.len() > 128)
         {
             return Err(Failure::new(
                 "INPUT_INVALID",
@@ -89,7 +98,7 @@ pub struct Models {
     pub deep: Option<String>,
 }
 fn timeout() -> u64 {
-    300
+    0
 }
 fn queue() -> usize {
     8
@@ -98,7 +107,7 @@ fn jobs() -> usize {
     64
 }
 fn retention() -> u64 {
-    3600
+    0
 }
 fn host_enabled() -> bool {
     true
@@ -106,7 +115,7 @@ fn host_enabled() -> bool {
 fn audit_rotation() -> usize {
     16_777_216
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
     pub agy_path: PathBuf,
@@ -115,8 +124,6 @@ pub struct Config {
     pub models: Models,
     #[serde(default = "host_enabled")]
     pub allow_host_execution: bool,
-    #[serde(default)]
-    pub research_domains: Vec<String>,
     #[serde(default)]
     pub runtime_paths: Vec<PathBuf>,
     #[serde(default)]
@@ -161,11 +168,9 @@ impl Config {
             || !c.agy_path.is_absolute()
             || c.allowed_roots.len() > 32
             || c.runtime_paths.len() > 16
-            || c.research_domains.len() > 64
-            || !(1..=900).contains(&c.timeout_seconds)
             || !(1..=32).contains(&c.max_queue)
             || !(c.max_queue..=256).contains(&c.max_jobs)
-            || !(60..=86400).contains(&c.retention_seconds)
+            || (c.retention_seconds != 0 && !(60..=604800).contains(&c.retention_seconds))
             || !(4096..=268_435_456).contains(&c.audit_rotate_bytes)
         {
             return Err(Failure::new(
@@ -185,18 +190,6 @@ impl Config {
                     "Model profiles require CLI model slugs.",
                 ));
             }
-        }
-        if c.research_domains.iter().any(|d| {
-            !d.contains('.')
-                || d.len() > 253
-                || !d
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".-".contains(&b))
-        }) {
-            return Err(Failure::new(
-                "CONFIG_INVALID",
-                "Research domains must be lowercase DNS names.",
-            ));
         }
         c.agy_path = fs::canonicalize(&c.agy_path).map_err(io_failure)?;
         let binary = fs::metadata(&c.agy_path).map_err(io_failure)?;
@@ -324,14 +317,14 @@ pub struct Report {
     pub findings: Vec<Finding>,
     pub limitations: Vec<String>,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestEntry {
     pub path: String,
     pub sha256: String,
     pub bytes: usize,
     pub lines: usize,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RunResult {
     pub exit_code: Option<i32>,
     pub duration_ms: Option<u64>,
@@ -364,7 +357,7 @@ impl RunResult {
         }
     }
 }
-#[derive(Clone, Default, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 pub struct Progress {
     pub events: usize,
     pub steps: usize,

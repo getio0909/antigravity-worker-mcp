@@ -1,5 +1,17 @@
 # Verification record
 
+## Version 0.2 background lifecycle
+
+Linux engineering checks cover detached stdio reconnection, shared lookup and cancellation, identical retry keys, conflicting keys, deadlines longer than 900 seconds, queued quota pause/resume, terminal-result disposal with deduplication preserved, and streams exceeding the former cumulative 2 MiB limit. Local warning-free Clippy, twenty-one Rust checks and seven launcher tests passed.
+
+Three native Gemini 3.8 Flash High design rounds compared daemon and per-job supervision, then examined lifecycle and failure scenarios. Corrections include retaining paused queued jobs, preserving completed reports during late cancellation, supervising storage-failure cleanup and reaping exited supervisors. These are independent reviews rather than a task-quality certification.
+
+A real isolated Gemini 3.8 Flash High review completed with native command and file tools. The final captured trace contained fourteen tool events and zero tool errors, with always-proceed permissions. The command results matched an independently computed source hash and eight-tool count. A writable temporary helper cache removed the observed agentapi read-only-filesystem error; selected inputs remained read-only.
+
+Additional live background, release and deployment checks are recorded below when completed.
+
+## Version 0.1.2 historical acceptance
+
 Recorded on 2026-10-02 for experimental version 0.1.2. Engineering checks establish the tested runtime behavior. Product acceptance also requires actual client calls, inspection of changed files and review of the execution trace.
 
 ## Local engineering checks

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Default task and result retention to unlimited; retain optional positive deadlines without the former 900-second cap.
+- Detach each job supervisor from the MCP connection and persist shared status and results for reconnecting Codex and Claude Code clients.
+- Add retry keys, shared FIFO scheduling, quota pause/resume, job discovery and explicit terminal-result disposal without deleting audit logs.
+- Preserve completed results during late cancellation and stop supervised work after state-write failures. Never automatically replay interrupted work.
+- Allow native tools in isolated analysis while enforcing read-only inputs through mounts; provide a writable temporary CLI helper cache.
+- Remove obsolete researchDomains settings; existing configurations must remove that field and explicitly set zero timeouts/retention to adopt the new defaults.
+- Publish all six native targets and the npx launcher through the existing release pipeline.
+
 ## 0.1.2
 
 - Retain full private MCP/CLI audit streams, selected inputs and terminal results by default, including after connection shutdown.

@@ -1,5 +1,6 @@
 use antigravity_worker_mcp::{
-    jobs::Worker,
+    audit::Audit,
+    broker::Broker,
     model::{Config, Failure, Outcome},
     server::Server,
 };
@@ -14,6 +15,9 @@ async fn main() {
 }
 async fn run() -> Outcome<()> {
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 1 && args[0] == "--run-job" {
+        return antigravity_worker_mcp::broker::run_job().await;
+    }
     if args.len() == 1 && args[0] == "--help" {
         println!("Usage: antigravity-worker-mcp --config /absolute/path/config.json [--no-audit]");
         return Ok(());
@@ -34,9 +38,13 @@ async fn run() -> Outcome<()> {
     if no_audit {
         config.audit_logging = false;
     }
-    let worker = Worker::new(config)?;
-    let audit = worker.audit.clone();
-    let service = Server::new(worker.clone())
+    let audit = Audit::open(&config)?;
+    let broker = Broker::new(
+        config,
+        std::env::current_exe().map_err(antigravity_worker_mcp::model::io_failure)?,
+        audit.clone(),
+    )?;
+    let service = Server::new(broker)
         .serve((
             audit.reader(tokio::io::stdin()),
             audit.writer(tokio::io::stdout()),
@@ -54,7 +62,6 @@ async fn run() -> Outcome<()> {
         std::future::pending::<()>().await;
     };
     tokio::select! { _ = service.waiting() => {}, _ = tokio::signal::ctrl_c() => {}, _ = termination => {} }
-    worker.shutdown().await;
     audit.record(
         "connection.close",
         serde_json::json!({"audit_failed":audit.has_failed()}),

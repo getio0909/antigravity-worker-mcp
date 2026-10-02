@@ -12,7 +12,7 @@ use std::{
 use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 
-fn now() -> u64 {
+pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -40,7 +40,7 @@ struct Job {
     submitted: u64,
     started: Option<u64>,
     finished: Option<u64>,
-    deadline_ms: u64,
+    deadline_ms: Option<u64>,
     progress: Progress,
     result: Option<RunResult>,
     cancel: CancellationToken,
@@ -54,10 +54,22 @@ pub struct Worker {
     pub paused: AtomicBool,
     stopped: CancellationToken,
     closed: AtomicBool,
+    gate: Option<DispatchGate>,
 }
+pub type DispatchGate = Arc<dyn Fn(&str) -> Outcome<bool> + Send + Sync>;
 impl Worker {
     pub fn new(config: Config) -> Outcome<Arc<Self>> {
+        Self::with_gate(config, None)
+    }
+    pub fn with_gate(config: Config, gate: Option<DispatchGate>) -> Outcome<Arc<Self>> {
         let audit = Audit::open(&config)?;
+        Self::with_audit(config, gate, audit)
+    }
+    pub fn with_audit(
+        config: Config,
+        gate: Option<DispatchGate>,
+        audit: Arc<Audit>,
+    ) -> Outcome<Arc<Self>> {
         let worker = Arc::new(Self {
             config,
             audit,
@@ -66,6 +78,7 @@ impl Worker {
             paused: AtomicBool::new(false),
             stopped: CancellationToken::new(),
             closed: AtomicBool::new(false),
+            gate,
         });
         let weak = Arc::downgrade(&worker);
         tokio::spawn(async move {
@@ -92,6 +105,9 @@ impl Worker {
         Ok(worker)
     }
     fn prune(&self) {
+        if self.config.retention_seconds == 0 {
+            return;
+        }
         let keep = self.config.retention_seconds * 1000;
         let current = now();
         self.jobs.lock().unwrap().retain(|_, j| {
@@ -99,7 +115,15 @@ impl Worker {
                 .is_some_and(|t| current.saturating_sub(t) >= keep)
         });
     }
-    pub fn submit(self: &Arc<Self>, mut input: Submission) -> Outcome<Value> {
+    pub fn submit(self: &Arc<Self>, input: Submission) -> Outcome<Value> {
+        self.submit_at(input, uuid::Uuid::new_v4().to_string(), now())
+    }
+    pub fn submit_at(
+        self: &Arc<Self>,
+        mut input: Submission,
+        id: String,
+        submitted: u64,
+    ) -> Outcome<Value> {
         input.resolve_mode();
         input.validate()?;
         if self.closed.load(Ordering::Relaxed) {
@@ -135,14 +159,20 @@ impl Worker {
                 "Retained-job limit reached; wait for expiry.",
             ));
         }
-        let id = uuid::Uuid::new_v4().to_string();
-        let submitted = now();
         let seconds = input.timeout_seconds.unwrap_or(self.config.timeout_seconds);
+        let deadline_ms = deadline(submitted, seconds)?;
+        let deadline = deadline_ms
+            .map(|ms| {
+                Instant::now()
+                    .checked_add(Duration::from_millis(ms.saturating_sub(now())))
+                    .ok_or_else(|| Failure::new("INPUT_INVALID", "Deadline cannot be represented."))
+            })
+            .transpose()?;
         let cancel = CancellationToken::new();
         let done = Arc::new(Notify::new());
         self.audit.record(
             "job.queued",
-            json!({"job_id":id,"submission":input,"deadline":submitted+seconds*1000}),
+            json!({"job_id":id,"submission":input,"deadline":deadline_ms}),
         )?;
         self.audit.flush()?;
         store.insert(
@@ -154,7 +184,7 @@ impl Worker {
                 submitted,
                 started: None,
                 finished: None,
-                deadline_ms: submitted + seconds * 1000,
+                deadline_ms,
                 progress: Progress::default(),
                 result: None,
                 cancel: cancel.clone(),
@@ -165,23 +195,17 @@ impl Worker {
         let this = self.clone();
         let task_id = id.clone();
         tokio::spawn(async move {
-            this.run(
-                task_id,
-                input,
-                Instant::now() + Duration::from_secs(seconds),
-                cancel,
-            )
-            .await;
+            this.run(task_id, input, deadline, cancel).await;
         });
         Ok(
-            json!({"job_id":id,"state":"queued","execution_mode":self.jobs.lock().unwrap()[&id].mode,"deadline":submitted+seconds*1000}),
+            json!({"job_id":id,"state":"queued","execution_mode":self.jobs.lock().unwrap()[&id].mode,"deadline":deadline_ms}),
         )
     }
     async fn run(
         self: Arc<Self>,
         id: String,
         input: Submission,
-        deadline: Instant,
+        deadline: Option<Instant>,
         cancel: CancellationToken,
     ) {
         let model = self.config.model(input.model_profile).unwrap_or_default();
@@ -219,7 +243,7 @@ impl Worker {
         }
         let mut store = self.jobs.lock().unwrap();
         if let Some(j) = store.get_mut(&id) {
-            j.state = match result.error.as_ref().map(|e| e.code) {
+            j.state = match result.error.as_ref().map(|e| e.code.as_str()) {
                 Some("CANCELLED") => State::Cancelled,
                 Some(_) => State::Failed,
                 None => State::Completed,
@@ -233,19 +257,19 @@ impl Worker {
         self: &Arc<Self>,
         id: &str,
         input: &Submission,
-        deadline: Instant,
+        deadline: Option<Instant>,
         cancel: &CancellationToken,
     ) -> Outcome<RunResult> {
         let _local = tokio::select! {
             permit = self.lane.clone().acquire_owned() => permit.map_err(io_failure)?,
             _ = cancel.cancelled() => return Err(Failure::new("CANCELLED", "Queued task was cancelled.")),
-            _ = tokio::time::sleep_until(deadline.into()) => return Err(Failure::new("TIMEOUT", "Task deadline elapsed in the queue.")),
+            _ = runtime::wait_timeout(deadline.map(|d| d.saturating_duration_since(Instant::now()))) => return Err(Failure::new("TIMEOUT", "Task deadline elapsed in the queue.")),
         };
         let _lock = loop {
             if cancel.is_cancelled() {
                 return Err(Failure::new("CANCELLED", "Queued task was cancelled."));
             }
-            if Instant::now() >= deadline {
+            if deadline.is_some_and(|d| Instant::now() >= d) {
                 return Err(Failure::new(
                     "TIMEOUT",
                     "Task deadline elapsed while waiting for the execution lock.",
@@ -257,7 +281,20 @@ impl Worker {
                     "Task was not dispatched after a quota failure.",
                 ));
             }
-            if let Some(file) = runtime::try_lock(&self.config)? {
+            if self
+                .gate
+                .as_ref()
+                .map(|gate| gate(id))
+                .transpose()?
+                .unwrap_or(true)
+                && let Some(file) = runtime::try_lock(&self.config)?
+                && self
+                    .gate
+                    .as_ref()
+                    .map(|gate| gate(id))
+                    .transpose()?
+                    .unwrap_or(true)
+            {
                 break file;
             }
             tokio::select! { _ = cancel.cancelled() => {}, _ = tokio::time::sleep(Duration::from_millis(250)) => {} }
@@ -282,8 +319,8 @@ impl Worker {
                 j.progress = v;
             }
         });
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
+        let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
+        if remaining.is_some_and(|d| d.is_zero()) {
             return Err(Failure::new(
                 "TIMEOUT",
                 "Task deadline elapsed before dispatch.",
@@ -325,31 +362,77 @@ impl Worker {
             return Ok(json!({"job_id":id,"state":j.state,"ready":false}));
         }
         let r = j.result.as_ref().unwrap();
-        let text = if patch {
-            r.patch.as_deref().unwrap_or_default()
-        } else {
-            &r.response
-        };
-        let total = text.chars().count();
-        let page: String = text.chars().skip(offset).take(limit).collect();
-        let preview: Vec<_> = if offset == 0 && !patch {
-            r.report.as_ref().map(|v| v.findings.iter().take(3).map(|f| {
+        result_page(
+            id,
+            &self.status_unlocked(id, j),
+            r,
+            self.config.audit_logging,
+            self.audit.directory.as_deref(),
+            (self.config.retention_seconds != 0)
+                .then(|| j.finished.unwrap_or_default() + self.config.retention_seconds * 1000),
+            offset,
+            limit,
+            patch,
+        )
+    }
+    fn status_unlocked(&self, id: &str, j: &Job) -> Value {
+        json!({"job_id":id,"state":j.state,"finished_at":j.finished})
+    }
+    pub fn export_result(&self, id: &str) -> Outcome<Option<RunResult>> {
+        Ok(self
+            .jobs
+            .lock()
+            .unwrap()
+            .get(id)
+            .ok_or_else(not_found)?
+            .result
+            .clone())
+    }
+}
+#[allow(clippy::too_many_arguments)]
+pub fn result_page(
+    id: &str,
+    status: &Value,
+    r: &RunResult,
+    audit_logging: bool,
+    audit_directory: Option<&std::path::Path>,
+    expires_at: Option<u64>,
+    offset: usize,
+    limit: usize,
+    patch: bool,
+) -> Outcome<Value> {
+    if limit == 0 || limit > 16000 {
+        return Err(Failure::new(
+            "INPUT_INVALID",
+            "Result page limit must be between 1 and 16000.",
+        ));
+    }
+    let text = if patch {
+        r.patch.as_deref().unwrap_or_default()
+    } else {
+        &r.response
+    };
+    let total = text.chars().count();
+    let page: String = text.chars().skip(offset).take(limit).collect();
+    let preview: Vec<_> = if offset == 0 && !patch {
+        r.report.as_ref().map(|v| v.findings.iter().take(3).map(|f| {
             let evidence: Vec<_> = f.evidence.iter().take(3).map(|e| json!({"file":e.file,"line":e.line,"url":e.url,"excerpt":e.excerpt.chars().take(400).collect::<String>()})).collect();
             json!({"title":f.title,"severity":f.severity,"detail":f.detail.chars().take(1000).collect::<String>(),"evidence":evidence})
         }).collect()).unwrap_or_default()
-        } else {
-            vec![]
-        };
-        Ok(
-            json!({"job_id":id,"state":j.state,"ready":true,"completion":if j.state==State::Completed{"complete"}else{"incomplete"},"verification_status":"unverified",
+    } else {
+        vec![]
+    };
+    Ok(
+        json!({"job_id":id,"state":status["state"],"ready":true,"completion":if status["state"]=="completed"{"complete"}else{"incomplete"},"verification_status":"unverified",
             "model":r.model,"actual_model":r.actual_model,"cli_status":r.cli_status,"usage":r.usage,"error":r.error,
-            "exit_code":r.exit_code,"duration_ms":r.duration_ms,"audit_logging":self.config.audit_logging,"audit_directory":self.audit.directory,"audit_stream_prefix":self.config.audit_logging.then(||format!("job-{id}")),
+            "exit_code":r.exit_code,"duration_ms":r.duration_ms,"audit_logging":audit_logging,"audit_directory":audit_directory,"audit_stream_prefix":audit_logging.then(||format!("job-{id}")),
             "summary":r.report.as_ref().map(|v|&v.summary),"findings_preview":preview,"findings_count":r.report.as_ref().map_or(0,|v|v.findings.len()),
             "limitations":r.report.as_ref().map(|v|&v.limitations),"manifest":if offset==0{r.manifest.clone()}else{vec![]},
             "section":if patch{"patch"}else{"response"},"text":page,"next_offset":if offset.saturating_add(limit)<total{Some(offset+limit)}else{None},"total_characters":total,
-            "patch_available":r.patch.as_ref().is_some_and(|p|!p.is_empty()),"patch_truncated":r.patch_truncated,"expires_at":j.finished.unwrap_or_default()+self.config.retention_seconds*1000}),
-        )
-    }
+            "patch_available":r.patch.as_ref().is_some_and(|p|!p.is_empty()),"patch_truncated":r.patch_truncated,"expires_at":expires_at}),
+    )
+}
+impl Worker {
     pub async fn cancel(&self, id: &str) -> Outcome<Value> {
         let _ = self
             .audit
@@ -419,8 +502,20 @@ impl Worker {
         for id in ids {
             let _ = self.cancel(&id).await;
         }
-        self.jobs.lock().unwrap().clear();
     }
+}
+pub fn deadline(submitted: u64, seconds: u64) -> Outcome<Option<u64>> {
+    if seconds == 0 {
+        return Ok(None);
+    }
+    submitted
+        .checked_add(
+            seconds
+                .checked_mul(1000)
+                .ok_or_else(|| Failure::new("INPUT_INVALID", "Deadline cannot be represented."))?,
+        )
+        .map(Some)
+        .ok_or_else(|| Failure::new("INPUT_INVALID", "Deadline cannot be represented."))
 }
 fn not_found() -> Failure {
     Failure::new(

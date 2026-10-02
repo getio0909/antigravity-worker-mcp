@@ -46,6 +46,13 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_secs(60));
         return;
     }
+    if text.contains("CASE:delay") {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    if text.contains("CASE:unlimited") {
+        let i = args.iter().position(|a| a == "--print-timeout").unwrap();
+        assert_eq!(args[i + 1], "0");
+    }
     if text.contains("CASE:quota") {
         println!(
             "{}",
