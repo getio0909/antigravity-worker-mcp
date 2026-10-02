@@ -743,8 +743,12 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Outcome<T> {
         use std::os::windows::fs::OpenOptionsExt;
         options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
     }
-    let file = options.open(path).map_err(io_failure)?;
-    let meta = file.metadata().map_err(io_failure)?;
+    let file = options
+        .open(path)
+        .map_err(|e| checkpoint_error("open", e))?;
+    let meta = file
+        .metadata()
+        .map_err(|e| checkpoint_error("metadata", e))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -761,18 +765,44 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Outcome<T> {
             "Job state must be a bounded private regular file.",
         ));
     }
-    serde_json::from_reader(file.take(RECORD_LIMIT + 1)).map_err(io_failure)
+    serde_json::from_reader(file.take(RECORD_LIMIT + 1)).map_err(|error| Failure {
+        code: "IO_FAILED".into(),
+        message: format!(
+            "Cannot decode a checkpoint (category {:?}, line {}, column {}).",
+            error.classify(),
+            error.line(),
+            error.column()
+        ),
+    })
+}
+fn checkpoint_error(operation: &str, error: std::io::Error) -> Failure {
+    Failure {
+        code: "IO_FAILED".into(),
+        message: format!(
+            "Checkpoint {operation} failed (OS error {}).",
+            error
+                .raw_os_error()
+                .map_or_else(|| "unavailable".into(), |code| code.to_string())
+        ),
+    }
 }
 fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Outcome<()> {
     private_directory(path.parent().ok_or_else(|| io_failure("parent"))?)?;
     let mut temporary = tempfile::Builder::new()
         .prefix(".checkpoint-")
         .tempfile_in(path.parent().unwrap())
-        .map_err(io_failure)?;
+        .map_err(|e| checkpoint_error("temporary creation", e))?;
     serde_json::to_writer(&mut temporary, value).map_err(io_failure)?;
-    temporary.flush().map_err(io_failure)?;
-    temporary.as_file().sync_all().map_err(io_failure)?;
-    temporary.persist(path).map_err(io_failure)?;
+    temporary
+        .flush()
+        .map_err(|e| checkpoint_error("flush", e))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|e| checkpoint_error("sync", e))?;
+    temporary
+        .persist(path)
+        .map_err(|e| checkpoint_error("replace", e.error))?;
     #[cfg(unix)]
     File::open(path.parent().unwrap())
         .and_then(|f| f.sync_all())

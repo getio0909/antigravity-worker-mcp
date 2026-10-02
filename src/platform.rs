@@ -61,7 +61,15 @@ pub fn lock_path(path: &Path) -> Outcome<Option<fs::File>> {
         use std::os::windows::fs::OpenOptionsExt;
         options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
     }
-    let file = options.open(path).map_err(io_failure)?;
+    let file = options.open(path).map_err(|error| Failure {
+        code: "IO_FAILED".into(),
+        message: format!(
+            "State lock open failed (OS error {}).",
+            error
+                .raw_os_error()
+                .map_or_else(|| "unavailable".into(), |code| code.to_string())
+        ),
+    })?;
     let meta = file.metadata().map_err(io_failure)?;
     if !meta.is_file() || !is_private(&meta) {
         return Err(Failure::new(
@@ -72,7 +80,15 @@ pub fn lock_path(path: &Path) -> Outcome<Option<fs::File>> {
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
         Err(fs::TryLockError::WouldBlock) => Ok(None),
-        Err(fs::TryLockError::Error(error)) => Err(io_failure(error)),
+        Err(fs::TryLockError::Error(error)) => Err(Failure {
+            code: "IO_FAILED".into(),
+            message: format!(
+                "State lock acquisition failed (OS error {}).",
+                error
+                    .raw_os_error()
+                    .map_or_else(|| "unavailable".into(), |code| code.to_string())
+            ),
+        }),
     }
 }
 
