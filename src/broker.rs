@@ -270,11 +270,16 @@ impl Broker {
         command.creation_flags(0x01000208);
         let mut child = match command.spawn() {
             Ok(child) => child,
-            Err(_) => {
-                let error = Failure::new(
-                    "BACKGROUND_UNAVAILABLE",
-                    "Cannot launch an independent supervisor in this host session.",
-                );
+            Err(cause) => {
+                let error = Failure {
+                    code: "BACKGROUND_UNAVAILABLE".into(),
+                    message: format!(
+                        "Cannot launch an independent supervisor in this host session (OS error {}).",
+                        cause
+                            .raw_os_error()
+                            .map_or_else(|| "unavailable".into(), |code| code.to_string())
+                    ),
+                };
                 let mut result = RunResult::empty(model);
                 result.error = Some(error.clone());
                 atomic_json(&directory.join("result.json"), &result)?;
