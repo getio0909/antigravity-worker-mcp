@@ -70,8 +70,15 @@ jobs:
         shell: bash
         run: cargo +"$RUST_VERSION" clippy --locked --target '${{ matrix.target }}' --all-targets --all-features -- -D warnings
       - name: Test
+        if: runner.os != 'Windows'
         shell: bash
         run: cargo +"$RUST_VERSION" test --locked --target '${{ matrix.target }}' --all-features
+      - name: Test Windows background lifetimes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: ./.github/scripts/test-windows.ps1
       - name: Build release
         shell: bash
         run: cargo +"$RUST_VERSION" build --locked --release --target '${{ matrix.target }}' --bin antigravity-worker-mcp

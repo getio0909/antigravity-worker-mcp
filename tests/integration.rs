@@ -691,6 +691,92 @@ async fn detached_jobs_survive_reconnection_and_accept_unlimited_duration() {
     c.worker.shutdown().await;
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn restricted_windows_launcher_refuses_background_work_without_dispatch() {
+    use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::System::{JobObjects::*, Threading::*};
+    let c = Context::new(8);
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_antigravity-worker-mcp"));
+    command.args([
+        "--config",
+        c.dir.path().join("config.json").to_str().unwrap(),
+    ]);
+    let transport = TokioChildProcess::new(command).unwrap();
+    let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    assert!(!raw.is_null());
+    let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    assert_ne!(
+        unsafe {
+            SetInformationJobObject(
+                job.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const _,
+                std::mem::size_of_val(&limits) as u32,
+            )
+        },
+        0
+    );
+    let raw = unsafe {
+        OpenProcess(
+            PROCESS_SET_QUOTA | PROCESS_TERMINATE,
+            0,
+            transport.id().unwrap(),
+        )
+    };
+    assert!(!raw.is_null());
+    let process = unsafe { OwnedHandle::from_raw_handle(raw) };
+    assert_ne!(
+        unsafe { AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle()) },
+        0
+    );
+    let client = ().serve(transport).await.unwrap();
+    let arguments = json!({"kind":"review","instructions":"CASE:full-permissions","root":c.dir.path().join("source"),"idempotency_key":"restricted-launcher"});
+    let submit = || {
+        CallToolRequestParams::new("ag_submit")
+            .with_arguments(arguments.as_object().unwrap().clone())
+    };
+    let submitted = client
+        .call_tool(submit())
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let id = submitted["job_id"].as_str().unwrap();
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("ag_result")
+                .with_arguments(json!({"job_id":id}).as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(result["state"], "failed");
+    assert_eq!(result["error"]["code"], "BACKGROUND_UNAVAILABLE");
+    assert!(
+        result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("OS error 5")
+    );
+    assert_eq!(result["process_stopped"], true);
+    assert!(!c.dir.path().join("source/direct.txt").exists());
+    let duplicate = client
+        .call_tool(submit())
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(duplicate["job_id"], id);
+    assert_eq!(duplicate["deduplicated"], true);
+    client.cancel().await.unwrap();
+    c.worker.shutdown().await;
+}
+
 #[tokio::test]
 async fn shared_quota_pause_keeps_waiting_jobs_and_disposal_preserves_keys() {
     use antigravity_worker_mcp::broker::Broker;

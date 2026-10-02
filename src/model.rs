@@ -380,7 +380,7 @@ pub fn classify(text: &str) -> Failure {
     {
         Failure::new(
             "QUOTA_EXHAUSTED",
-            "Provider quota or capacity is unavailable; dispatch is paused until restart.",
+            "Provider quota or capacity is unavailable; use ag_resume after checking the provider.",
         )
     } else if [
         "auth",

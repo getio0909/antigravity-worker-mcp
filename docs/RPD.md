@@ -41,7 +41,7 @@ Initial use cases:
 4. Text extraction: extract fields, classifications or timelines from selected UTF-8 materials, with an explicit input scope.
 5. Coding: modify a working copy or an original project and report changes and checks. Working-copy execution returns a patch.
 
-Initial tasks need an independent acceptance condition, such as analyzing a fixed file set with source references. The host splits batches into bounded tasks. Version 0.1 does not provide an indefinite agent loop.
+Initial tasks need an independent acceptance condition, such as analyzing a fixed file set with source references. The host splits batches into tasks. The worker forwards one CLI task and does not restart it automatically.
 
 ## 4. Goals and scope
 

@@ -212,7 +212,7 @@ impl Broker {
         if retained >= self.config.max_jobs {
             return Err(Failure::new(
                 "RESULT_STORE_FULL",
-                "Shared retained-job limit reached; allow configured result expiry before submitting again.",
+                "Shared retained-job limit reached; discard terminal results with ag_forget or wait for configured expiry.",
             ));
         }
         let id = uuid::Uuid::new_v4().to_string();
