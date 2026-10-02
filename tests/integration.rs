@@ -1,0 +1,405 @@
+use antigravity_worker_mcp::{
+    jobs::Worker,
+    model::{Config, Submission},
+    runtime, snapshot,
+};
+use serde_json::{Value, json};
+#[cfg(target_os = "linux")]
+use std::path::Path;
+use std::{
+    fs,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio_util::sync::CancellationToken;
+
+struct Context {
+    dir: tempfile::TempDir,
+    worker: Arc<Worker>,
+}
+impl Context {
+    fn new(max_queue: usize) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("source");
+        let state = dir.path().join("state");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("example.txt"), "original\n").unwrap();
+        fs::create_dir(&state).unwrap();
+        antigravity_worker_mcp::platform::private_mode(&state, 0o700).unwrap();
+        let config = dir.path().join("config.json");
+        fs::write(&config,json!({"agyPath":env!("CARGO_BIN_EXE_agy-fixture"),"allowedRoots":[root],"models":{"fast":"fixture-fast","deep":"fixture-deep"},"stateDirectory":state,"maxQueue":max_queue}).to_string()).unwrap();
+        Self {
+            dir,
+            worker: Worker::new(Config::load(&config).unwrap()),
+        }
+    }
+    fn submit(
+        &self,
+        instruction: &str,
+        extra: Value,
+    ) -> Result<String, antigravity_worker_mcp::model::Failure> {
+        let mut v = json!({"kind":"review","root":self.dir.path().join("source"),"files":["example.txt"],"instructions":instruction,"timeout_seconds":10});
+        for (k, val) in extra.as_object().unwrap() {
+            v[k] = val.clone();
+        }
+        let s: Submission = serde_json::from_value(v).unwrap();
+        Ok(self.worker.submit(s)?["job_id"].as_str().unwrap().into())
+    }
+    async fn wait(&self, id: &str) -> Value {
+        let end = Instant::now() + Duration::from_secs(15);
+        loop {
+            let s = self.worker.status(id).unwrap();
+            if ["completed", "failed", "cancelled"].contains(&s["state"].as_str().unwrap()) {
+                return self.worker.result(id, 0, 16000, false).unwrap();
+            }
+            assert!(Instant::now() < end, "task did not terminate");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+#[tokio::test]
+async fn default_host_has_full_permissions_and_automatic_edits() {
+    let c = Context::new(8);
+    let id = c.submit("CASE:full-permissions", json!({})).unwrap();
+    let r = c.wait(&id).await;
+    assert_eq!(r["state"], "completed");
+    assert_eq!(c.worker.status(&id).unwrap()["execution_mode"], "host");
+    assert_eq!(
+        fs::read_to_string(c.dir.path().join("source/direct.txt")).unwrap(),
+        "host-execution-enabled\n"
+    );
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+#[cfg(target_os = "linux")]
+async fn optional_isolation_returns_applicable_patch_without_changing_source() {
+    let c = Context::new(8);
+    runtime::check().await.unwrap();
+    let id = c.submit("CASE:modify", json!({"isolation":true})).unwrap();
+    let r = c.wait(&id).await;
+    assert_eq!(r["state"], "completed", "{r}");
+    assert_eq!(
+        fs::read_to_string(c.dir.path().join("source/example.txt")).unwrap(),
+        "original\n"
+    );
+    let patch = c.worker.result(&id, 0, 16000, true).unwrap();
+    let path = c.dir.path().join("change.patch");
+    fs::write(&path, patch["text"].as_str().unwrap()).unwrap();
+    let out = runtime::process(
+        Path::new("/usr/bin/git"),
+        &["apply".into(), path.into_os_string()],
+        Some(&c.dir.path().join("source")),
+        None,
+        Duration::from_secs(3),
+        &CancellationToken::new(),
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.code, Some(0));
+    assert_eq!(
+        fs::read_to_string(c.dir.path().join("source/example.txt")).unwrap(),
+        "updated\n"
+    );
+    assert!(c.dir.path().join("source/new.txt").exists());
+    assert!(
+        !fs::read_dir(c.dir.path().join("state")).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("job-"))
+    );
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+#[cfg(target_os = "linux")]
+async fn analysis_denial_is_failure_even_with_zero_exit() {
+    let c = Context::new(8);
+    let id = c
+        .submit("CASE:readonly", json!({"execution_mode":"analysis"}))
+        .unwrap();
+    let r = c.wait(&id).await;
+    assert_eq!(r["error"]["code"], "PERMISSION_DENIED");
+    assert_eq!(
+        fs::read_to_string(c.dir.path().join("source/example.txt")).unwrap(),
+        "original\n"
+    );
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+async fn timeout_malformed_output_and_running_cancel() {
+    let c = Context::new(8);
+    let id = c.submit("CASE:wait", json!({"timeout_seconds":1})).unwrap();
+    assert_eq!(c.wait(&id).await["error"]["code"], "TIMEOUT");
+    let id = c.submit("CASE:malformed", json!({})).unwrap();
+    assert_eq!(c.wait(&id).await["error"]["code"], "STREAM_INVALID");
+    let id = c.submit("CASE:output-limit", json!({})).unwrap();
+    assert_eq!(c.wait(&id).await["error"]["code"], "OUTPUT_LIMIT");
+    let id = c.submit("CASE:wait", json!({})).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let v = c.worker.cancel(&id).await.unwrap();
+    assert_eq!(v["state"], "cancelled");
+    assert_eq!(v["process_stopped"], true);
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+async fn cancellation_stops_a_supervised_descendant() {
+    let c = Context::new(8);
+    let id = c.submit("CASE:child", json!({})).unwrap();
+    let sentinel = c.dir.path().join("source/child-alive.txt");
+    let end = Instant::now() + Duration::from_secs(5);
+    while !sentinel.exists() {
+        assert!(Instant::now() < end, "descendant did not start");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(c.worker.cancel(&id).await.unwrap()["process_stopped"], true);
+    let stopped = fs::read(&sentinel).unwrap();
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert_eq!(fs::read(&sentinel).unwrap(), stopped);
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+async fn queue_cancel_bounds_quota_and_model_validation() {
+    let c = Context::new(2);
+    let long = c.submit("CASE:wait", json!({})).unwrap();
+    let queued = c.submit("fixture", json!({})).unwrap();
+    assert_eq!(
+        c.submit("fixture", json!({})).unwrap_err().code,
+        "QUEUE_FULL"
+    );
+    assert_eq!(
+        c.worker.cancel(&queued).await.unwrap()["state"],
+        "cancelled"
+    );
+    c.worker.cancel(&long).await.unwrap();
+    let quota = c.submit("CASE:quota", json!({})).unwrap();
+    let after_quota = c.submit("fixture", json!({})).unwrap();
+    assert_eq!(c.wait(&quota).await["error"]["code"], "QUOTA_EXHAUSTED");
+    assert_eq!(c.wait(&after_quota).await["error"]["code"], "QUOTA_PAUSED");
+    assert_eq!(
+        c.submit("fixture", json!({})).unwrap_err().code,
+        "QUOTA_PAUSED"
+    );
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+async fn separate_workers_share_execution_lock() {
+    let c = Context::new(8);
+    let other = Worker::new(c.worker.config.clone());
+    let id = c.submit("CASE:wait", json!({})).unwrap();
+    for _ in 0..100 {
+        if c.worker.status(&id).unwrap()["progress"]["events"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(runtime::try_lock(&other.config).unwrap().is_none());
+    c.worker.cancel(&id).await.unwrap();
+    assert!(runtime::try_lock(&other.config).unwrap().is_some());
+    other.shutdown().await;
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+async fn source_symlinks_hardlinks_and_nontext_are_rejected() {
+    let c = Context::new(8);
+    let root = c.dir.path().join("source");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("example.txt"), root.join("alias.txt")).unwrap();
+        let id = c.submit("fixture", json!({"files":["alias.txt"]})).unwrap();
+        assert_eq!(c.wait(&id).await["error"]["code"], "INPUT_SCOPE_INVALID");
+    }
+    #[cfg(windows)]
+    {
+        let junction = root.join("junction");
+        let target = c.dir.path().join("outside");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("example.txt"), "outside\n").unwrap();
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "junction creation failed");
+        let id = c
+            .submit("fixture", json!({"files":["junction/example.txt"]}))
+            .unwrap();
+        assert_eq!(c.wait(&id).await["error"]["code"], "INPUT_SCOPE_INVALID");
+        fs::remove_dir(junction).unwrap();
+    }
+    fs::hard_link(root.join("example.txt"), root.join("linked.txt")).unwrap();
+    let id = c.submit("fixture", json!({})).unwrap();
+    assert_eq!(c.wait(&id).await["error"]["code"], "INPUT_SCOPE_INVALID");
+    let input: Submission = serde_json::from_value(
+        json!({"kind":"review","instructions":"fixture","root":root,"files":["../outside"]}),
+    )
+    .unwrap();
+    assert_eq!(
+        snapshot::capture(&c.worker.config, &input, &c.dir.path().join("bad-snapshot"))
+            .unwrap_err()
+            .code,
+        "INPUT_SCOPE_INVALID"
+    );
+    fs::write(root.join("binary.txt"), [0u8, 1u8]).unwrap();
+    let id = c
+        .submit("fixture", json!({"files":["binary.txt"]}))
+        .unwrap();
+    assert_eq!(c.wait(&id).await["error"]["code"], "INPUT_FORMAT_INVALID");
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+async fn queue_deadline_expires_before_dispatch() {
+    let c = Context::new(8);
+    let long = c.submit("CASE:wait", json!({})).unwrap();
+    let queued = c.submit("fixture", json!({"timeout_seconds":1})).unwrap();
+    let r = c.wait(&queued).await;
+    assert_eq!(r["error"]["code"], "TIMEOUT");
+    assert_eq!(c.worker.status(&queued).unwrap()["started_at"], Value::Null);
+    c.worker.cancel(&long).await.unwrap();
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+async fn host_toggle_model_and_result_store_limits() {
+    let c = Context::new(8);
+    let mut config = c.worker.config.clone();
+    config.allow_host_execution = false;
+    config.models.deep = None;
+    config.max_queue = 2;
+    config.max_jobs = 2;
+    let worker = Worker::new(config);
+    let host: Submission = serde_json::from_value(
+        json!({"kind":"research","instructions":"fixture","root":c.dir.path().join("source")}),
+    )
+    .unwrap();
+    assert_eq!(worker.submit(host).unwrap_err().code, "HOST_MODE_DISABLED");
+    let deep: Submission = serde_json::from_value(
+        json!({"kind":"research","instructions":"fixture","isolation":true,"model_profile":"deep"}),
+    )
+    .unwrap();
+    assert_eq!(worker.submit(deep).unwrap_err().code, "MODEL_UNAVAILABLE");
+    worker.shutdown().await;
+    let mut config = worker.config.clone();
+    config.allow_host_execution = true;
+    let worker = Worker::new(config);
+    for _ in 0..2 {
+        let input: Submission = serde_json::from_value(
+            json!({"kind":"research","instructions":"fixture","root":c.dir.path().join("source")}),
+        )
+        .unwrap();
+        let id = worker.submit(input).unwrap()["job_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for _ in 0..100 {
+            if worker.result(&id, 0, 8000, false).unwrap()["ready"] == true {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    let input: Submission = serde_json::from_value(
+        json!({"kind":"research","instructions":"fixture","root":c.dir.path().join("source")}),
+    )
+    .unwrap();
+    assert_eq!(worker.submit(input).unwrap_err().code, "RESULT_STORE_FULL");
+    worker.shutdown().await;
+    c.worker.shutdown().await;
+}
+#[cfg(not(target_os = "linux"))]
+#[tokio::test]
+async fn isolation_is_rejected_without_host_fallback() {
+    let c = Context::new(8);
+    let id = c.submit("CASE:modify", json!({"isolation":true})).unwrap();
+    assert_eq!(c.wait(&id).await["error"]["code"], "ISOLATION_UNSUPPORTED");
+    assert_eq!(
+        fs::read_to_string(c.dir.path().join("source/example.txt")).unwrap(),
+        "original\n"
+    );
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+async fn unicode_pagination_delivers_complete_report() {
+    let c = Context::new(8);
+    let id = c.submit("fixture", json!({})).unwrap();
+    let r = c.wait(&id).await;
+    let full = r["text"].as_str().unwrap();
+    let mut text = String::new();
+    let mut offset = 0;
+    loop {
+        let v = c.worker.result(&id, offset, 3, false).unwrap();
+        text.push_str(v["text"].as_str().unwrap());
+        if let Some(next) = v["next_offset"].as_u64() {
+            offset = next as usize;
+        } else {
+            break;
+        }
+    }
+    assert_eq!(text, full);
+    assert!(text.contains("\u{e9}\u{1f680}"));
+    c.worker.shutdown().await;
+}
+#[tokio::test]
+async fn real_stdio_discovery_paging_and_shutdown() {
+    use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
+    let c = Context::new(8);
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_antigravity-worker-mcp"));
+    command.args([
+        "--config",
+        c.dir.path().join("config.json").to_str().unwrap(),
+    ]);
+    let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    assert_eq!(tools.len(), 5);
+    assert!(tools.iter().any(|t| t.name == "ag_submit"));
+    let caps = client
+        .call_tool(CallToolRequestParams::new("ag_capabilities"))
+        .await
+        .unwrap();
+    assert_eq!(
+        caps.structured_content.as_ref().unwrap()["default_isolation"],
+        false
+    );
+    let args = json!({"kind":"review","root":c.dir.path().join("source"),"instructions":"fixture"});
+    let req =
+        CallToolRequestParams::new("ag_submit").with_arguments(args.as_object().unwrap().clone());
+    let submitted = client.call_tool(req).await.unwrap();
+    let id = submitted.structured_content.unwrap()["job_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut finished = false;
+    for _ in 0..100 {
+        let s = client
+            .call_tool(
+                CallToolRequestParams::new("ag_status")
+                    .with_arguments(json!({"job_id":id}).as_object().unwrap().clone()),
+            )
+            .await
+            .unwrap();
+        if s.structured_content.unwrap()["state"] == "completed" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(finished);
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("ag_result")
+                .with_arguments(json!({"job_id":id,"limit":5}).as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+    let v = result.structured_content.unwrap();
+    assert_eq!(v["next_offset"], 5);
+    assert_eq!(v["text"].as_str().unwrap().chars().count(), 5);
+    assert_eq!(v["verification_status"], "unverified");
+    client.cancel().await.unwrap();
+    c.worker.shutdown().await;
+}

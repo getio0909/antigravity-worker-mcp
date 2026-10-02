@@ -1,0 +1,13 @@
+{
+  "agyPath": "C:\\Users\\YOUR_ACCOUNT\\AppData\\Local\\agy\\bin\\agy.exe",
+  "allowedRoots": ["C:\\Projects\\YOUR_PROJECT"],
+  "models": {
+    "fast": "REPLACE_WITH_A_SLUG_FROM_AGY_MODELS",
+    "deep": null
+  },
+  "allowHostExecution": true,
+  "timeoutSeconds": 300,
+  "maxQueue": 8,
+  "maxJobs": 64,
+  "retentionSeconds": 3600
+}
