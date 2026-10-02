@@ -15,7 +15,7 @@ The executable has two roles: an ephemeral RMCP stdio adapter and one detached s
 
 `broker.rs` stores status in `jobs/UUID/status.json` and terminal reports in `result.json`. Instructions and validated configuration travel to the supervisor through an anonymous stdin pipe; they are not saved as a replayable job request. Enabled audit logging records delegated task bytes separately. Metadata and results remain necessary with audit logging disabled.
 
-Records use temporary files, synchronized writes and atomic replacement. Unix also synchronizes the parent directory. These operations assume a local filesystem with working advisory locks and atomic renames. NFS, SMB and cross-machine state sharing are unsupported.
+Records use temporary files, synchronized writes and atomic replacement. Unix also synchronizes the parent directory. On Windows, transient access or sharing errors during replacement receive a bounded one-second retry; model execution is never retried. These operations assume a local filesystem with working advisory locks and atomic renames. NFS, SMB and cross-machine state sharing are unsupported.
 
 `admission.lock` serializes reservations and shared capacity checks. `execution.lock` permits one CLI task across all instances using this directory. `supervisor.lock` belongs to one supervisor's lifetime. `transition.lock` orders cancellation requests, terminal publication and result disposal. Lock files must never be unlinked while processes may use them.
 

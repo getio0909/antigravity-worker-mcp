@@ -12,9 +12,11 @@ A real isolated Gemini 3.8 Flash High review completed with native command and f
 
 The initial Windows CI launch failed with OS error 5 because [Cargo places its children in a restrictive Job Object](https://doc.rust-lang.org/nightly/nightly-rustc/src/cargo/util/job.rs.html). Windows CI compiles tests with Cargo, then runs the resulting executables in an account-free WMI process outside Cargo and the CI runner job, with the official [process startup flags](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-processstartup). An additional test explicitly places the MCP adapter in a restrictive job and checks that it refuses dispatch, reports the stopped process and preserves the retry key. The production launcher retains the host restriction; it does not change Job Object policy or install a service.
 
+The final functional source passed [all six native CI jobs](https://github.com/getio0909/antigravity-worker-mcp/actions/runs/37034178002), including format, warning-free Clippy, launcher tests and release archive checks. Both Windows architectures ran their twenty-one Rust checks three times. Linux ran twenty-one checks and macOS twenty. Windows checkpoint replacement retries transient access or sharing errors for at most one second; it never repeats a model task. A real Windows Codex session also invoked an MCP probe successfully: its parent Job Object allowed both explicit and silent breakaway.
+
 The first Opus follow-up hit the old 900-second deadline. A second run used the detached, unlimited backend and reached a provider capacity error after 787,716 ms. Its partial output remains auditable and is not counted as a completed design review. The three completed Flash High rounds inform the version 0.2 design; the completed Opus assessment recorded below applies to version 0.1.2.
 
-Additional live background, release and deployment checks are recorded below when completed.
+Release packages and post-release client checks are documented separately as they become available. Native CI uses an account-free CLI fixture; the real model and client checks above provide separate evidence.
 
 ## Version 0.1.2 historical acceptance
 
