@@ -439,7 +439,7 @@ fn settings(config: &Config, mode: Mode) -> Value {
         }
         json!({"toolPermission":"strict","allowNonWorkspaceAccess":false,"enableTelemetry":false,"mcpServers":{},"permissions":{"allow":allow,"deny":deny,"ask":[]}})
     } else {
-        json!({"toolPermission":"always-proceed","allowNonWorkspaceAccess":true,"enableTelemetry":false,"mcpServers":{},"permissions":{"allow":["read_file(*)","write_file(*)","command(*)","read_url(*)"],"deny":["mcp(*)"],"ask":[]}})
+        json!({"toolPermission":"always-proceed","allowNonWorkspaceAccess":true,"enableTelemetry":false,"mcpServers":{},"permissions":{"allow":["read_file(*)","write_file(*)","command(*)","read_url(*)"],"deny":[],"ask":[]}})
     }
 }
 #[cfg(target_os = "linux")]
@@ -644,7 +644,7 @@ async fn execute_inner(
         args.push("--dangerously-skip-permissions".into());
     }
     let request = format!(
-        "Task type: {:?}. Execution mode: {:?}.\nSelected inputs are in {}. Return the required structured report. Cite file paths and line numbers or HTTP(S) sources. State incomplete work in limitations. Follow the project's runtime and environment policies.\nSelected files: {}\n{}",
+        "Task type: {:?}. Execution mode: {:?}.\nSelected inputs are in {}. Cite file paths and line numbers or HTTP(S) sources. State incomplete work in limitations. Follow the project's runtime and environment policies.\nReturn exactly one final JSON object with summary (string), findings (array), and limitations (array of strings). Every finding must contain title, detail, severity (info/low/medium/high), and evidence (array). Every evidence entry must contain file, line, url, and excerpt; use null for absent file, line, or url. Findings must be objects, never strings. Use an empty findings array when no finding needs evidence. Do not include toolAction or toolSummary fields.\nSelected files: {}\n{}",
         input.kind,
         input.execution_mode,
         if host_root.is_some() {

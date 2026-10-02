@@ -1,5 +1,7 @@
 # Antigravity Worker MCP
 
+[![CI](https://github.com/getio0909/antigravity-worker-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/getio0909/antigravity-worker-mcp/actions/workflows/ci.yml)
+
 [Product requirements](docs/RPD.md) | [Protocol](docs/protocol.md) | [Verification](docs/verification.md)
 
 A Rust MCP worker for the official Google Antigravity CLI. Codex, Claude Code, and other stdio MCP clients can submit background tasks, check status, read reports, and cancel execution. The wrapper ships as one executable and does not need Node.js.

@@ -27,18 +27,25 @@ The installed official CLI was version 1.2.14. A capability query returned fourt
 
 | Check | Observed result |
 | --- | --- |
-| Structured task through an official TypeScript MCP SDK client connected to the Rust server. | Completed with a validated structured report; actual model was gemini-3.8-flash-medium. |
-| Isolated single-file edit through the Rust release executable. | Completed; original bytes unchanged; returned patch contained the actual edit. |
+| Isolated single-file edit through the Rust release executable and an official TypeScript MCP SDK client. | Completed with a validated report; original bytes unchanged; returned patch contained the actual edit. |
+| Default host single-file edit in a temporary project. | Completed with a validated report; the original target file contained the requested replacement. |
 | Cancellation after real CLI progress began. | Returned cancelled with `process_stopped: true`. |
 
-Observed usage for the structured sample was 12,504 input, 238 output, 195 thinking and 12,742 total tokens. For the file-edit sample it was 25,419 input, 468 output, 342 thinking and 25,887 total tokens. These are CLI-reported fields; no subscription quota or price is inferred from them. No cached authentication values or real task instructions are included in this record.
+Both final editing checks used gemini-3.8-flash-medium. Observed CLI usage:
 
-The provider checks used Linux isolation and cached official authentication. Native fixture tests separately verify automatic default host edits. The TypeScript SDK was a test client only; deployment has no Node.js dependency.
+| Mode | Input | Output | Thinking | Cache read | Reported total |
+| --- | --- | --- | --- | --- | --- |
+| Workspace | 52,358 | 669 | 468 | 0 | 53,027 |
+| Host | 72,280 | 8,830 | 8,501 | 0 | 81,110 |
+
+These are CLI-reported fields; no subscription quota or price is inferred from them. No cached authentication values or real task instructions are included in this record.
+
+The provider checks used Linux and cached official authentication. The TypeScript SDK was a temporary test client only; deployment has no Node.js dependency.
 
 ## Unverified behavior and limits
 
 - Complete real-provider workflows inside actual Codex and Claude Code sessions have not been tested. Registration commands follow their official documentation; SDK stdio interoperability has been tested.
-- Real-provider host execution, provider authentication on macOS/Windows, complex coding quality and research accuracy have not been measured.
+- Provider authentication on macOS/Windows, complex coding quality and research accuracy have not been measured.
 - The declared Rust 1.89 minimum has not been compiled locally; the tested and pinned CI compiler is 1.97.1.
 - No benchmark establishes submission P95, task success rate, quota efficiency or remaining account allowance.
 - macOS/Windows isolation, a shared result broker, durable restart recovery, strict interpreter controls and command resource quotas are outside version 0.1.
