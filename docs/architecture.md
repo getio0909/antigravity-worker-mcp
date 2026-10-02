@@ -8,12 +8,12 @@ The executable has two roles: an ephemeral RMCP stdio adapter and one detached s
 - The official CLI remains autonomous. Default host mode inherits the current user's environment, settings and native automatic permissions. Task instructions and native answers pass through unchanged, with no report template or semantic validator.
 - Acceptance reserves one job identity before dispatch. An optional caller key deduplicates retries, including after response loss, failure or result expiry. The wrapper never automatically replays interrupted work.
 - Runtime locks are the authority for ownership. Recovery does not signal a saved PID, avoiding accidental termination after PID reuse.
-- Reports, job metadata and raw audit streams have separate retention. Capacity exhaustion rejects new work without silently discarding reports.
+- Native answers, job metadata and raw audit streams have separate retention. Capacity exhaustion rejects new work without silently discarding answers.
 - Optional isolation limits mounted resources and permits useful agent tools inside that boundary.
 
 ## Shared local state
 
-`broker.rs` stores status in `jobs/UUID/status.json` and terminal reports in `result.json`. Instructions and validated configuration travel to the supervisor through an anonymous stdin pipe; they are not saved as a replayable job request. Enabled audit logging records delegated task bytes separately. Metadata and results remain necessary with audit logging disabled.
+`broker.rs` stores status in `jobs/UUID/status.json` and terminal answers with runtime metadata in `result.json`. Instructions and validated configuration travel to the supervisor through an anonymous stdin pipe; they are not saved as a replayable job request. Enabled audit logging records delegated task bytes separately. Metadata and results remain necessary with audit logging disabled.
 
 Records use temporary files, synchronized writes and atomic replacement. Unix also synchronizes the parent directory. On Windows, transient access or sharing errors during replacement receive a bounded one-second retry; model execution is never retried. These operations assume a local filesystem with working advisory locks and atomic renames. NFS, SMB and cross-machine state sharing are unsupported.
 
@@ -41,7 +41,7 @@ The desktop route creates one temporary task with no engine execution deadline o
 
 The startup handshake is bounded independently of task execution. A supervisor that has not become ready is stopped before startup failure is published. Its key identifies the failed job; a deliberate new attempt needs a new key. An interrupted reservation can briefly remain queued during reconciliation. A supervisor seeing a terminal reservation does not execute it.
 
-`ag_cancel` writes a durable request and waits at most ten seconds for supervised cleanup. If cleanup remains pending, `process_stopped` stays false and the caller polls status. Completed runtime results win over late cancellation; cancellation does not rewrite their report as failure. Terminal states are immutable. Cancellation does not reverse host changes or external operations.
+`ag_cancel` writes a durable request and waits at most ten seconds for supervised cleanup. If cleanup remains pending, `process_stopped` stays false and the caller polls status. Completed runtime results win over late cancellation; cancellation does not turn a completed result into failure. Terminal states are immutable. Cancellation does not reverse host changes or external operations.
 
 Unix supervision sends TERM to the CLI process group, then KILL after two seconds if required. Linux also requests parent-death termination for the direct CLI process. Windows uses a kill-on-close Job Object assigned before task stdin is delivered. Linux isolated PID namespaces constrain descendants. Host commands can create services or detached Unix sessions outside the supervised group. Abrupt supervisor death on macOS can leave host processes running; reconciliation reports `process_stopped: false` instead of claiming cleanup. See [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
 

@@ -18,7 +18,7 @@ The host-mode agent chooses its own tools and working steps. The wrapper passes 
 
 Isolated CLI history is ephemeral. A forced wrapper termination may leave private temporary files; follow the architecture cleanup instructions.
 
-Cancellation supervises the CLI and process group. Host-mode detached processes, modified files and external side effects can outlive cancellation. Reports are always unverified until independently checked.
+Cancellation supervises the CLI and process group. Host-mode detached processes, modified files and external side effects can outlive cancellation. Claims in native answers remain unverified until independently checked.
 
 For a vulnerability, use the repository's private vulnerability-reporting channel when available. Include affected version, a synthetic reproducer and observed behavior. Do not place credentials, real conversations or sensitive logs in public issues.
 

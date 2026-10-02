@@ -4,13 +4,34 @@
 
 Local source checks passed twenty Rust checks, seven npm launcher checks, warning-free native Clippy and Windows cross-target Clippy. The native protocol test requires only instructions, resolves the submitting cwd and operates without a configured starting-directory allowlist. Original-answer paging covers plain text, Markdown, unrelated JSON and an old-report-shaped body with invalid evidence; all complete successfully and remain byte-for-byte text. A recovered permission diagnostic no longer overrides terminal CLI success.
 
-The runtime passes instructions unchanged and does not supply --json-schema. The old report types, field validator and preview generator were removed. Existing stored answers remain readable, with historical errors preserved and no automatic replay. A real Flash High task also completed in 14,375 ms. It wrote the independently checked five-byte result, returned a 371-character non-JSON answer and reported SUCCESS with exit code zero. Captured CLI input matched the submitted task exactly; the full MCP answer matched the native terminal response exactly. The initial MCP connection closed after submission, and a new connection retrieved the result. A separate Gemini 3.8 Flash High design discussion completed in 99,660 ms with a 13,027-character native Markdown answer. It supported keeping lifecycle, transport and audit responsibilities in the bridge while leaving answer interpretation to the caller. Its references to the current project make it an advisory discussion, not a blind review or quality benchmark. Captured task text and returned answer both matched their native counterparts exactly. Final installed-client acceptance is not yet recorded for this version.
+The runtime passes instructions unchanged and does not supply --json-schema. The old report types, field validator and preview generator were removed. Existing stored answers remain readable, with historical errors preserved and no automatic replay. A real Flash High task completed in 14,375 ms. It wrote the independently checked five-byte result, returned a 371-character non-JSON answer and reported SUCCESS with exit code zero. Captured CLI input matched the submitted task exactly; the full MCP answer matched the native terminal response exactly. The initial MCP connection closed after submission, and a new connection retrieved the result.
 
-## Version 0.2.1 retained evidence
+A separate Gemini 3.8 Flash High design discussion completed in 99,660 ms with a 13,027-character native Markdown answer. It supported keeping lifecycle, transport and audit responsibilities in the bridge while leaving answer interpretation to the caller. Its references to the current project make it an advisory discussion, not a blind review or quality benchmark. Captured task text and returned answer both matched their native counterparts exactly.
+
+### Version 0.3 release
+
+Source commit 5aa1c4690c4b534deccf5f7ceb30a67d24aaaf2c passed [all six main-branch native jobs](https://github.com/getio0909/antigravity-worker-mcp/actions/runs/37065732275). The [v0.3.0 tag run](https://github.com/getio0909/antigravity-worker-mcp/actions/runs/37065735534) also passed and published six native archives, the npm tarball and SHA256SUMS. All seven downloaded packages matched the manifest and contained no private configuration, build output or unsafe extraction paths.
+
+The public GitHub-tarball npx command returned 0.3.0, initialized MCP, listed all eight tools and reported only instructions as a required submission field. It also retrieved a retained answer from an older failed job without changing its historical status or replaying it. The unqualified npm registry package remains unpublished.
+
+### Version 0.3 installed clients
+
+The published x86-64 release executables are installed through CC Switch 3.20.4 on Linux and Windows, with Codex and Claude Code enabled. Both machines use the existing private state and full audit logging, host execution, no task deadline, no result expiry and an empty starting-directory allowlist. Windows desktop fallback remains enabled. Database entries and both global client configurations agree; comparisons preserved all other MCP entries, providers, CC Switch settings, remaining client configuration, Claude settings and Codex authentication files.
+
+Fresh Codex sessions used the global registration, submitted only instructions and exited before completion. Fresh Claude Code sessions selected the same registered entry, retrieved each job and independently read the output file. No executable or worker configuration override was supplied to Claude Code.
+
+| Machine | Native task duration | Native answer | Independent file check |
+| --- | --- | --- | --- |
+| Linux x86-64 | 39,718 ms. | 402 characters, non-JSON. | Five bytes: decimal 1369 followed by a newline. |
+| Windows x86-64 desktop | 44,438 ms. | 483 characters, non-JSON. | Five bytes: decimal 1369 followed by a newline. |
+
+Both tasks used gemini-3.8-flash-high and reported completed, CLI SUCCESS, exit code zero and supervised processes stopped. Captured CLI task text matched the MCP submission, the native cwd matched the submitting client, and the full ag_result text matched the native terminal response. Neither dispatch supplied --json-schema or required kind/root. No temporary Windows startup registration remained. These checks establish invocation, lifetime and answer delivery; they do not benchmark model quality.
+
+## Historical version 0.2.1 evidence
 
 Recorded on 2026-10-02 for experimental version 0.2.1. Native CI, real provider execution, client integration and independent file checks provide separate evidence. A completed model report remains unverified until its claims and effects are checked.
 
-## Release and engineering checks
+### Release and engineering checks
 
 The release source passed [all six main-branch native jobs](https://github.com/getio0909/antigravity-worker-mcp/actions/runs/37041068244). The [v0.2.1 tag run](https://github.com/getio0909/antigravity-worker-mcp/actions/runs/37042870570) also passed and published six native archives, an npm tarball and SHA256SUMS.
 
@@ -28,7 +49,7 @@ Engineering coverage includes host permissions, optional Linux isolation, cancel
 
 All seven downloaded packages matched their published SHA-256 values. Archive inspection found English documentation and licenses, with no private configuration, native fixtures, build output or unsafe extraction paths. The public GitHub-tarball npx command returned version 0.2.1. A subsequent npx connection initialized MCP, listed all eight tools and called ag_capabilities with CLI 1.2.15, host execution, isolation disabled, zero task timeout, zero result expiry and audit logging enabled. npm registry publication remains separate.
 
-## Unlimited background execution
+### Unlimited background execution
 
 A real Gemini 3.8 Flash High task completed after 1,231,330 ms, with the submitting MCP connection already closed. Its shell operation alone lasted 920 seconds. Fresh stdio connections retrieved the completed result, and an independent read confirmed the 20-byte output file. The result reported the configured model, CLI SUCCESS, exit code zero, no deadline and no expiry. Both transport and detached-supervisor audit streams remained on disk.
 
@@ -43,7 +64,7 @@ Both tasks used gemini-3.8-flash-high and returned completed, CLI SUCCESS and ex
 
 These checks establish transport-independent execution and shared result retrieval. They do not establish model quality or sustained reliability.
 
-## Windows desktop launch
+### Windows desktop launch
 
 A real Windows Codex submission with version 0.2.0 failed with BACKGROUND_UNAVAILABLE and OS error 5 before inference. A probe inside the actual MCP process found a kill-on-close Job Object without breakaway permission. An earlier Node-based probe had measured its spawned child's libuv Job Object and did not establish MCP breakaway.
 
@@ -53,7 +74,7 @@ The route requests no elevation, saves no password or startup-input file, and tr
 
 Direct launch remains available. The fallback requires a usable interactive sign-in and Task Scheduler permission, and receives profile environment settings rather than every transient parent override. It can be disabled explicitly.
 
-## Linux isolation and actual tools
+### Linux isolation and actual tools
 
 A real isolated Gemini 3.8 Flash High review completed with native command and file tools. Its captured trace contained fourteen tool events and zero tool errors. Returned command results matched an independently computed source hash and the eight-tool count. Selected inputs remained read-only.
 
@@ -63,7 +84,7 @@ The shared Linux task's native trace contained two completed run_command operati
 
 Earlier autonomous coding checks under version 0.1.2 produced correct JavaScript modules through both clients. Their native agents chose shell commands, reads and edits; independent checks confirmed the modules and unchanged original checks. One earlier task inspected unrelated CLI transcripts without mentioning those reads in its final report. Audit inspection exposed the additional activity. Task wording is not an enforced tool policy, and successful edits do not certify the accuracy or completeness of the report.
 
-## Model discussions and controls
+### Model discussions and controls
 
 Reviews used the installed official CLI with fixed gemini-3.8-flash-high and claude-opus-4-6-thinking slugs. Current [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp), [Claude Code MCP](https://code.claude.com/docs/en/mcp) and [headless execution](https://code.claude.com/docs/en/headless) documentation informed integration work.
 
@@ -75,9 +96,9 @@ Opus completed an initial version 0.1.2 assessment. Later follow-ups encountered
 
 Flash High accepted effort high; effort max conflicted with that model variant. Opus Thinking rejected the effort control, and the installed CLI exposed no selectable maximum reasoning budget for it. No alternate model was substituted and no unavailable reasoning setting is claimed.
 
-## Installed clients and CC Switch
+### Installed clients and CC Switch
 
-CC Switch 3.20.4 registrations on Linux and Windows now point to version 0.2.1, with Codex and Claude Code enabled. Database flags and both client configuration files agree. Linux uses a stable executable symlink; Windows uses a versioned native executable. The shared private state preserves existing job IDs and audit records.
+The version 0.2.1 installation used CC Switch 3.20.4 on Linux and Windows, with Codex and Claude Code enabled. Database flags and both client configuration files agreed. Linux used a stable executable symlink; Windows used a versioned native executable. Existing job IDs and audit records were preserved in shared private state.
 
 | Machine | Codex | Claude Code | Antigravity CLI |
 | --- | --- | --- | --- |
