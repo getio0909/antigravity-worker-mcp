@@ -464,11 +464,8 @@ async fn real_stdio_discovery_paging_and_shutdown() {
         .structured_content
         .unwrap();
     assert_eq!(
-        whole["text"],
-        fs::canonicalize(c.dir.path().join("source"))
-            .unwrap()
-            .to_string_lossy()
-            .as_ref()
+        fs::canonicalize(whole["text"].as_str().unwrap()).unwrap(),
+        fs::canonicalize(c.dir.path().join("source")).unwrap()
     );
     client.cancel().await.unwrap();
     let incoming = String::from_utf8(audit_bytes(&audit_path, "mcp.stdin")).unwrap();
