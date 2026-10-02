@@ -11,6 +11,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+#[cfg(target_os = "linux")]
 use tokio_util::sync::CancellationToken;
 
 struct Context {

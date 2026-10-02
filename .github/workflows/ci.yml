@@ -51,6 +51,8 @@ jobs:
           if git grep -n -I -P '\p{Han}'; then
             echo 'Public project files must not contain Chinese text.' >&2
             exit 1
+          else
+            test "$?" -eq 1
           fi
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
