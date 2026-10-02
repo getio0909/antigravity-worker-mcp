@@ -2,7 +2,7 @@
 
 The server uses stdio MCP and eight asynchronous tools. Accepted jobs run independently of client connections. Use the same private `stateDirectory` in Codex and Claude Code to share IDs, status, results and cancellation. Closing a client does not cancel its jobs. Results remain until explicit disposal or configured expiry.
 
-The official client documentation was checked on 2026-10-02. Local acceptance used Codex 0.160.0, Claude Code 2.1.285 and the official Antigravity CLI 1.2.14. See the [verification record](verification.md) for observed outcomes and gaps.
+The official client documentation was checked on 2026-10-02. Linux and Windows acceptance used the installed Codex and Claude Code clients with the official Antigravity CLI 1.2.15. See the [verification record](verification.md) for observed outcomes and gaps.
 
 ## Codex
 
@@ -71,7 +71,7 @@ Open the MCP manager in CC Switch, add a server named `antigravity-worker`, and 
 
 Enable both **Codex** and **Claude Code** for this entry. CC Switch stores the registration and writes the client configurations: `~/.codex/config.toml` for Codex and `~/.claude.json` for Claude Code. The timeout and default approval fields configure Codex. Claude Code 2.1.285 accepted the same shared entry in the local check; its tool permissions are configured separately as described above. Keep the Google login in the official CLI's native storage.
 
-Start new client sessions, then check `codex mcp get antigravity-worker --json` and `claude mcp get antigravity-worker`. Call `ag_capabilities` from each client to confirm the connection, selected profiles and logging state. A local CC Switch 3.20.4 build and both installed clients passed this check; see the [verification record](verification.md).
+Start new client sessions, then check `codex mcp get antigravity-worker --json` and `claude mcp get antigravity-worker`. Call `ag_capabilities` from each client to confirm the connection, selected profiles and logging state. CC Switch 3.20.4 registrations and fresh Codex and Claude Code sessions passed this check on both Linux and Windows; see the [verification record](verification.md).
 
 Manage removal through CC Switch so its stored registration and both client files stay consistent. Disabling the entry does not delete retained audit logs. See the [official CC Switch MCP guide](https://github.com/farion1231/cc-switch/blob/main/docs/user-manual/en/3-extensions/3.1-mcp.md).
 
@@ -82,6 +82,8 @@ Replace the native command with the versioned npx command in the [README](../REA
 Linux supports all three execution modes. macOS and Windows explicitly reject workspace/analysis isolation rather than switching to host mode. Client connection success does not establish model correctness or task-scope compliance. Inspect the actual changes and [audit trace](audit.md), including when a task returns `completed`.
 
 ## Background delegation
+
+The host agent chooses when to call these tools from their descriptions and the current task. Registration alone does not dispatch work automatically or guarantee delegation. Ask the host to delegate a scoped task through antigravity-worker when explicit use is desired. After submission, the host queries the job ID to collect results; reopening a client does not automatically resume polling.
 
 Version 0.2 separates short MCP control requests from unlimited task execution. Keep a normal per-call timeout for submission, polling and cancellation; increasing it to cover the full task is unnecessary. `timeoutSeconds: 0` is the default task lifetime. Supply an `idempotency_key` for uncertain retries, use `ag_list` to find IDs after reconnecting, and explicitly cancel unwanted work. `ag_forget` frees completed-result capacity while preserving enabled audit logs.
 
