@@ -5,7 +5,7 @@ if (-not $target) { throw 'RELEASE_TARGET is required' }
 $archive = "antigravity-worker-mcp-v$version-$target.zip"
 New-Item -ItemType Directory -Force release, artifacts | Out-Null
 Copy-Item "target/$target/release/antigravity-worker-mcp.exe" release/
-Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, README.md release/
+Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, README.md, CONTRIBUTING.md, SECURITY.md, CHANGELOG.md release/
 Copy-Item -Recurse licenses, docs, examples release/
 Compress-Archive -Path release/* -DestinationPath "artifacts/$archive" -Force
 $hash = (Get-FileHash "artifacts/$archive" -Algorithm SHA256).Hash.ToLowerInvariant()

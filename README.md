@@ -4,7 +4,7 @@
 
 [Product requirements](docs/RPD.md) | [Protocol](docs/protocol.md) | [Verification](docs/verification.md)
 
-A Rust MCP worker for the official Google Antigravity CLI. Codex, Claude Code, and other stdio MCP clients can submit background tasks, check status, read reports, and cancel execution. The wrapper ships as one executable and does not need Node.js.
+A Rust MCP worker for the official Google Antigravity CLI. Codex, Claude Code, and other stdio MCP clients can submit background tasks, check status, read reports, and cancel execution. Run the standalone executable or use the optional npm launcher.
 
 **Default: no isolation, full current-user permissions, automatic execution.** Tasks run in the original configured workspace with `--dangerously-skip-permissions`. Set **`isolation: true`** for a separate working copy, or select **`execution_mode: "analysis"`** for read-only inputs.
 
@@ -22,11 +22,28 @@ Download the archive matching your operating system and architecture from [GitHu
 
 | Platform | x86-64 target | ARM64 target | Execution modes |
 | --- | --- | --- | --- |
-| Linux, glibc | `x86_64-unknown-linux-gnu` | `aarch64-unknown-linux-gnu` | Host, workspace, analysis. |
+| Linux, glibc 2.35+ | `x86_64-unknown-linux-gnu` | `aarch64-unknown-linux-gnu` | Host, workspace, analysis. |
 | macOS | `x86_64-apple-darwin` | `aarch64-apple-darwin` | Host. |
 | Windows | `x86_64-pc-windows-msvc` | `aarch64-pc-windows-msvc` | Host. |
 
-CI runs native compilation, lint, tests and packaging for all six targets. Linux/macOS archives use `.tar.gz`; Windows archives use `.zip` and contain `antigravity-worker-mcp.exe`. Tag releases publish all six archives together with checksums. See the [verification record](docs/verification.md) for actual tested environments and remaining gaps.
+CI runs native compilation, lint, tests and packaging for all six targets. Linux/macOS archives use `.tar.gz`; Windows archives use `.zip` and contain `antigravity-worker-mcp.exe`. Tag releases publish all six archives, the npm launcher and checksums. See the [verification record](docs/verification.md) for actual tested environments and remaining gaps.
+
+### Run with npx
+
+The release includes an npm package that works without an npm registry publication. With Node.js 20.11 or newer and npm installed:
+
+```bash
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.1/antigravity-worker-mcp-0.1.1.tgz antigravity-worker-mcp --version
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.1/antigravity-worker-mcp-0.1.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+```
+
+The dependency-free Node launcher downloads the matching Rust archive, verifies its release SHA-256, and caches the extracted executable and documentation. Later launches verify the cached executable before using it. Arguments, working directory, environment and stdin/stdout pass through to Rust; download messages use stderr. The official `agy` still needs a separate installation and login. Unix extraction requires `tar`; Windows uses PowerShell. Linux musl systems and older glibc need a source build.
+
+Cache locations are `$XDG_CACHE_HOME/antigravity-worker-mcp` or `~/.cache/antigravity-worker-mcp` on Linux, `~/Library/Caches/antigravity-worker-mcp` on macOS, and `%LOCALAPPDATA%\antigravity-worker-mcp\Cache` on Windows. A cache verification error names the version/target directory to remove before retrying. Direct binary execution needs no Node.js runtime.
+
+The unqualified command `npx -y antigravity-worker-mcp` becomes available after a separate npm registry publication. This release uses the explicit GitHub package URL above; it does not claim registry availability.
+
+### Build from source
 
 Alternatively, use an existing Rust toolchain 1.89 or newer:
 
@@ -60,6 +77,15 @@ The server speaks MCP on stdin/stdout. A terminal without a client waits for inp
 codex mcp add antigravity-worker -- /absolute/path/antigravity-worker-mcp --config /absolute/path/config.local.json
 claude mcp add --scope user antigravity-worker -- /absolute/path/antigravity-worker-mcp --config /absolute/path/config.local.json
 ```
+
+Or register the npm launcher on Linux/macOS:
+
+```bash
+codex mcp add antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.1/antigravity-worker-mcp-0.1.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+claude mcp add --scope user antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.1/antigravity-worker-mcp-0.1.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+```
+
+On Windows, register `cmd /c npx` in place of `npx` so the MCP host can launch npm's command shim. Run the `--version` command once before registration to populate the native executable cache.
 
 Restart an existing session to load the server. Codex `/mcp` shows connection status; `claude mcp list` checks Claude Code's configured connection. See the [Codex documentation](https://learn.chatgpt.com/docs/extend/mcp) and [Claude Code documentation](https://code.claude.com/docs/en/mcp) for host-specific settings.
 
@@ -136,8 +162,9 @@ cargo fmt --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-features
 cargo build --locked --release --bin antigravity-worker-mcp
+npm test
 ```
 
 Tests use a native CLI fixture and real processes, Bubblewrap, advisory locks and stdio MCP. They do not require Google authentication or invoke a model. See [architecture](docs/architecture.md), [contributing](CONTRIBUTING.md), [security](SECURITY.md), and the [complete RPD](docs/RPD.md).
 
-The project uses the [MIT license](LICENSE). Dependencies retain their own licenses. Google Antigravity and its models remain subject to their service terms. GitHub hosts source and binary releases; crates.io and MCP Registry publication are separate roadmap items.
+The project uses the [MIT license](LICENSE). Dependencies retain their own licenses. Google Antigravity and its models remain subject to their service terms. GitHub hosts source, binary releases and the npm launcher tarball; npm registry, crates.io and MCP Registry publication are separate roadmap items.

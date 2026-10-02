@@ -1,0 +1,38 @@
+{
+  "name": "antigravity-worker-mcp",
+  "version": "0.1.1",
+  "description": "Launch the native Rust MCP worker for the official Google Antigravity CLI",
+  "type": "module",
+  "bin": {
+    "antigravity-worker-mcp": "npm/bin/cli.mjs"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "files": [
+    "npm/bin/cli.mjs",
+    "npm/lib/launcher.mjs",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "licenses/",
+    "docs/",
+    "examples/"
+  ],
+  "scripts": {
+    "test": "node --test npm/test/launcher.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getio0909/antigravity-worker-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/getio0909/antigravity-worker-mcp/issues"
+  },
+  "homepage": "https://github.com/getio0909/antigravity-worker-mcp#readme",
+  "license": "MIT",
+  "keywords": ["mcp", "antigravity", "rust", "codex", "claude-code"]
+}

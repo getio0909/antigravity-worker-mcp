@@ -1,6 +1,6 @@
 # Antigravity Worker MCP product requirements document (RPD)
 
-Document version: 1.0. Product version: 0.1.0. Updated: 2026-10-02.
+Document version: 1.0. Product version: 0.1.1. Updated: 2026-10-02.
 
 This document defines behavior, interfaces, permissions, acceptance criteria and maintenance requirements. Source code, automated tests and the [verification record](verification.md) establish what has been implemented and tested. Roadmap features are outside the current release contract.
 
@@ -59,7 +59,7 @@ Initial tasks need an independent acceptance condition, such as analyzing a fixe
 
 Version 0.1 provides five tools, five task categories, three execution modes, a same-host execution lock, bounded connection-local queues, paged reports and patches, cancellation, deadlines, error classification and temporary-data cleanup.
 
-Host mode supports Linux, macOS and Windows on x86-64 and ARM64. Workspace and analysis isolation require Linux. The implementation uses Rust and the official RMCP SDK. Deployment requires one executable and no Node.js runtime. Default host execution operates on the original project with the current user's permissions and automatic approval. Optional workspace execution copies selected files rather than traversing an entire repository.
+Host mode supports Linux, macOS and Windows on x86-64 and ARM64. Workspace and analysis isolation require Linux. The implementation uses Rust and the official RMCP SDK. Direct deployment requires one executable and no Node.js runtime. An optional dependency-free npm launcher supports npx on the same six targets. Default host execution operates on the original project with the current user's permissions and automatic approval. Optional workspace execution copies selected files rather than traversing an entire repository.
 
 Workspace patches are returned for review and are not automatically applied. The wrapper itself does not append Git commits, pushes or merges. A host task with broad command permissions can perform operations within its instructions, so the caller must define the intended scope.
 
@@ -271,7 +271,9 @@ Protocol, scheduling, execution, input capture and validation remain separate mo
 
 Configuration has strict structural validation. Paths are absolute. Unix state directories belong to the current user with mode 0700. Windows defaults to the user's local application-data directory, rejects reparse-point state directories, and relies on inherited Windows ACLs rather than enforcing a custom ACL. Operators selecting another Windows state directory must restrict access appropriately. Model slugs come from the live catalog; fixed historical names are not capability discovery.
 
-Install from Cargo source builds or GitHub release executables. Native CI builds, tests and packages Linux, macOS and Windows on both x86-64 and ARM64. Version tags publish six archives plus SHA-256 checksums after every target succeeds. Default host mode needs an authenticated `agy`. Bubblewrap and working user namespaces are Linux-only isolation requirements; Git is needed for workspace patches. Version 0.1 does not require a cloud daemon. Each client launches a stdio process, with shared locking when instances use the same state directory.
+Install from Cargo source builds, GitHub release executables or the release's npm tarball through npx. Native CI builds, tests and packages Linux, macOS and Windows on both x86-64 and ARM64. Version tags publish six native archives, one npm launcher tarball and SHA-256 checksums after every target succeeds. Prebuilt Linux executables require glibc 2.35 or newer. Default host mode needs an authenticated `agy`. Bubblewrap and working user namespaces are Linux-only isolation requirements; Git is needed for workspace patches. Version 0.1 does not require a cloud daemon. Each client launches a stdio process, with shared locking when instances use the same state directory.
+
+The optional launcher requires Node.js 20.11 or newer and npm. It selects the platform/architecture, fetches immutable versioned GitHub release assets, checks the archive SHA-256 before extraction, and atomically installs a per-user version/target cache. Cache hits verify the executable hash. Diagnostics use stderr; arguments, cwd, environment and stdio pass through without MCP parsing. Checksums depend on trust in the GitHub release publisher and HTTPS; they are not detached signatures. Unix extraction uses tar; Windows uses PowerShell. Registry publication remains separate from the working release-tarball entry point.
 
 Uninstallation removes client registrations and wrapper files. Stop relevant connections and confirm no task is running before cleaning state. Do not automatically remove the official CLI, login, projects or account history.
 

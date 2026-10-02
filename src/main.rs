@@ -19,7 +19,7 @@ async fn run() -> Outcome<()> {
         return Ok(());
     }
     if args.len() == 1 && args[0] == "--version" {
-        println!("0.1.0");
+        println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     if args.len() != 2 || args[0] != "--config" {

@@ -8,3 +8,5 @@
 *.tar.gz
 SHA256SUMS
 /artifacts/
+/node_modules/
+*.tgz

@@ -551,7 +551,7 @@ pub async fn capabilities(config: &Config, cancel: &CancellationToken) -> Outcom
         vec![]
     };
     Ok(
-        json!({"version":"0.1.0","platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"isolation_supported":cfg!(target_os="linux"),"cli_version":if version.code==Some(0){Some(version.stdout.trim())}else{None},"models":catalog,
+        json!({"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"isolation_supported":cfg!(target_os="linux"),"cli_version":if version.code==Some(0){Some(version.stdout.trim())}else{None},"models":catalog,
         "models_error":if models.code==Some(0){None}else{Some(classify(&models.stderr).code)},"configured_profiles":config.models,
         "execution_modes":supported_modes(config.allow_host_execution),
         "default_execution_mode":"host","default_isolation":false,"skip_permissions":{"workspace":true,"analysis":false,"host":true},"concurrency":1,"lock_scope":"same stateDirectory on one host",

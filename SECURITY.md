@@ -1,5 +1,7 @@
 # Security and execution scope
 
+The optional npm launcher downloads versioned assets from this repository's GitHub Releases. It verifies the archive against the release SHA-256 manifest before extraction and verifies cached executable bytes on reuse. These checks rely on the release publisher and HTTPS; checksums are not independent signatures. Unix cache directories reject symlinks and other-user write access. Windows caches use inherited profile ACLs. The launcher forwards the original environment and stdio without reading MCP messages, and has no install hook or third-party npm dependencies.
+
 Default execution is unrestricted host mode: `isolation: false`, automatic CLI approval, the current user's environment, and the original allowed starting directory. Use trusted tasks and materials. The starting-directory allowlist is not a host filesystem sandbox. The official CLI may use its existing hooks, plugins, MCP connections and history settings.
 
 Set `isolation: true` for a separate working copy, or `execution_mode: "analysis"` for read-only inputs. A deployment can set `allowHostExecution: false` to reject host tasks. Bubblewrap failure is an error; it never silently selects host execution.
