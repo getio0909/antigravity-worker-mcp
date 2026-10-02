@@ -61,7 +61,7 @@ async fn run() -> Outcome<()> {
         }
         std::future::pending::<()>().await;
     };
-    tokio::select! { _ = service.waiting() => {}, _ = tokio::signal::ctrl_c() => {}, _ = termination => {} }
+    tokio::select! { _ = service.waiting() => {}, _ = antigravity_worker_mcp::platform::interrupt() => {}, _ = termination => {} }
     audit.record(
         "connection.close",
         serde_json::json!({"audit_failed":audit.has_failed()}),

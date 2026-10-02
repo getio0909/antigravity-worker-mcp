@@ -79,6 +79,21 @@ impl Audit {
     pub fn failure_token(&self) -> CancellationToken {
         self.failed.clone()
     }
+    pub fn supervisor_diagnostics(&self, id: &str) -> Outcome<std::process::Stdio> {
+        let Some(directory) = &self.directory else {
+            return Ok(std::process::Stdio::null());
+        };
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let file =
+            self.checked(options.open(directory.join(format!("job-{id}.supervisor.stderr.log"))))?;
+        Ok(file.into())
+    }
     pub fn has_failed(&self) -> bool {
         self.failed.is_cancelled()
     }

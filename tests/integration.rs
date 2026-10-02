@@ -18,6 +18,21 @@ struct Context {
     dir: tempfile::TempDir,
     worker: Arc<Worker>,
 }
+fn supervisor_diagnostics(state: &std::path::Path, id: &str) -> String {
+    let mut text = String::new();
+    if let Ok(connections) = fs::read_dir(state.join("audit")) {
+        for connection in connections.flatten() {
+            if let Ok(bytes) = fs::read_to_string(
+                connection
+                    .path()
+                    .join(format!("job-{id}.supervisor.stderr.log")),
+            ) {
+                text.push_str(&bytes.chars().take(4000).collect::<String>());
+            }
+        }
+    }
+    text
+}
 impl Context {
     fn new(max_queue: usize) -> Self {
         let dir = tempfile::tempdir().unwrap();
@@ -394,7 +409,11 @@ async fn real_stdio_discovery_paging_and_shutdown() {
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(finished);
+    assert!(
+        finished,
+        "{}",
+        supervisor_diagnostics(&c.worker.config.state_directory, &id)
+    );
     let result = client
         .call_tool(
             CallToolRequestParams::new("ag_result")
@@ -628,7 +647,8 @@ async fn detached_jobs_survive_reconnection_and_accept_unlimited_duration() {
     assert_eq!(
         finished.as_ref().unwrap()["state"],
         "completed",
-        "{finished:?}"
+        "{finished:?}; {}",
+        supervisor_diagnostics(&c.worker.config.state_directory, &id)
     );
     assert_eq!(finished.as_ref().unwrap()["process_stopped"], true);
     let mut conflict = arguments;
@@ -803,7 +823,9 @@ async fn shared_quota_pause_keeps_waiting_jobs_and_disposal_preserves_keys() {
     }
     assert_eq!(
         broker.result(id, 0, 1000, false).unwrap()["error"]["code"],
-        "QUOTA_EXHAUSTED"
+        "QUOTA_EXHAUSTED",
+        "{}",
+        supervisor_diagnostics(&c.worker.config.state_directory, id)
     );
     assert_eq!(
         broker

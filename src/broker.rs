@@ -218,6 +218,7 @@ impl Broker {
         let id = uuid::Uuid::new_v4().to_string();
         let directory = self.config.state_directory.join("jobs").join(&id);
         private_directory(&directory)?;
+        let diagnostics = self.audit.supervisor_diagnostics(&id)?;
         let mut record = Record {
             schema: 1,
             status: json!({"job_id":id,"state":"queued","kind":input.kind,"execution_mode":input.execution_mode,"model":model,"submitted_at":submitted,"started_at":null,"finished_at":null,"deadline":deadline,"progress":Progress::default(),"completion":"pending","verification_status":"unverified","error":null,"process_stopped":false}),
@@ -255,7 +256,7 @@ impl Broker {
             .arg("--run-job")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(diagnostics)
             .kill_on_drop(false);
         #[cfg(unix)]
         unsafe {
@@ -611,12 +612,13 @@ pub async fn run_job() -> Outcome<()> {
         if let Ok(mut signal) =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         {
-            tokio::select! {_=signal.recv()=>{},_=tokio::signal::ctrl_c()=>{}}
+            tokio::select! {_=signal.recv()=>{},_=platform::interrupt()=>{}}
             return;
         }
-        let _ = tokio::signal::ctrl_c().await;
+        platform::interrupt().await;
     };
     tokio::pin!(termination);
+    let mut termination_enabled = true;
     let outcome = async {
         loop {
             if directory.join("cancel.requested").exists() {
@@ -656,13 +658,17 @@ pub async fn run_job() -> Outcome<()> {
             drop(_transition);
             tokio::select! {
                 _=tokio::time::sleep(Duration::from_millis(250))=>{},
-                _=&mut termination=>{let _=worker.cancel(&id).await;},
+                _=&mut termination, if termination_enabled=>{termination_enabled=false;let _=worker.cancel(&id).await;},
             }
         }
         Ok::<(), Failure>(())
     }
     .await;
     worker.shutdown().await;
+    if let Err(error) = &outcome {
+        let _ = audit.record("supervisor.failure", json!({"job_id":id,"error":error}));
+        let _ = audit.flush();
+    }
     outcome?;
     audit.record("supervisor.close", json!({"job_id":id}))?;
     audit.flush()?;

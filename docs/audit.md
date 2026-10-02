@@ -51,4 +51,6 @@ When logging is enabled, an unsafe directory fails startup with `AUDIT_UNSAFE`. 
 
 Writes are synced at job lifecycle and connection checkpoints, and at rotation. Abrupt termination or power loss can still leave an incomplete tail. Restore available private storage before restarting, or explicitly start with logging disabled. The wrapper never silently disables logging after a storage error.
 
+Supervisor startup and fatal diagnostics are retained in `job-<id>.supervisor.stderr.log` in the accepting adapter's audit directory. This small error stream uses the supervisor's inherited file handle; it is not a rotated CLI stream and may lose its final bytes on abrupt termination. The detached supervisor's own connection directory contains the captured task streams and terminal records.
+
 Disk use grows with retained tasks and outputs. Stop the relevant connections before inspecting, archiving or deleting their audit directories. `retentionSeconds` and `ag_forget` control persisted result availability only; neither deletes audit files or deduplication metadata. With audit disabled, the operational job status and final report still persist so disconnected clients can retrieve their work; task inputs are not saved as replay requests.

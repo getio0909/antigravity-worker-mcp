@@ -3,6 +3,13 @@ use crate::model::{Failure, Outcome, io_failure};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::{fs, path::Path};
 
+pub async fn interrupt() {
+    if tokio::signal::ctrl_c().await.is_err() {
+        // Detached Windows processes may have no console control handler.
+        std::future::pending::<()>().await;
+    }
+}
+
 pub fn private_mode(path: &Path, mode: u32) -> Outcome<()> {
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(io_failure)?;
