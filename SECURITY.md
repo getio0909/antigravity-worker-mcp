@@ -2,7 +2,7 @@
 
 The optional npm launcher downloads versioned assets from this repository's GitHub Releases. It verifies the archive against the release SHA-256 manifest before extraction and verifies cached executable bytes on reuse. These checks rely on the release publisher and HTTPS; checksums are not independent signatures. Unix cache directories reject symlinks and other-user write access. Windows caches use inherited profile ACLs. The launcher forwards the original environment and stdio without reading MCP messages, and has no install hook or third-party npm dependencies.
 
-Default execution is unrestricted host mode: `isolation: false`, automatic CLI approval, the current user's environment, and the original allowed starting directory. Use trusted tasks and materials. The starting-directory allowlist is not a host filesystem sandbox. The official CLI may use its existing hooks, plugins, MCP connections and history settings.
+Default execution is unrestricted host mode: `isolation: false`, automatic CLI approval, the current user's environment, and the original working directory. Use trusted tasks and materials. An absent or empty allowedRoots list permits any existing starting directory; an explicit list is not a host filesystem sandbox. The official CLI may use its existing hooks, plugins, MCP connections and history settings.
 
 Set `isolation: true` for a separate working copy, or `execution_mode: "analysis"` for read-only inputs. A deployment can set `allowHostExecution: false` to reject host tasks. Bubblewrap failure is an error; it never silently selects host execution.
 
@@ -14,7 +14,7 @@ Full local audit logging is enabled by default. It retains task instructions, se
 
 Use `--no-audit` or `auditLogging: false` to disable wrapper logging completely. No audit metadata or disabled marker is retained in that mode. CLI, MCP-host and provider retention follow their own settings. An enabled logger's storage failure stops dispatch and cancels the affected supervised execution rather than silently dropping records.
 
-The host-mode agent chooses its own tools and working steps. The wrapper adds task context and report formatting without behavioral restrictions. Task wording does not enforce command or filesystem policy. With current-user authority, the agent can also modify or delete audit files; the trace is not tamper-proof. Inspect actual results and side effects independently.
+The host-mode agent chooses its own tools and working steps. The wrapper passes task text unchanged and does not impose a report format or evidence schema. Task wording does not enforce command or filesystem policy. With current-user authority, the agent can also modify or delete audit files; the trace is not tamper-proof. Inspect actual results and side effects independently.
 
 Isolated CLI history is ephemeral. A forced wrapper termination may leave private temporary files; follow the architecture cleanup instructions.
 

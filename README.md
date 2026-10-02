@@ -4,7 +4,7 @@
 
 [Product requirements](docs/RPD.md) | [Protocol](docs/protocol.md) | [Clients](docs/clients.md) | [Audit logging](docs/audit.md) | [Verification](docs/verification.md)
 
-A Rust MCP worker for the official Google Antigravity CLI. Codex, Claude Code, and other stdio MCP clients can submit background tasks, check status, read reports, and cancel execution. Run the standalone executable or use the optional npm launcher.
+A Rust MCP worker for the official Google Antigravity CLI. Codex, Claude Code, and other stdio MCP clients can submit background tasks, check status, read native answers, and cancel execution. Run the standalone executable or use the optional npm launcher.
 
 **Default: no isolation, full current-user permissions, automatic execution, no task deadline.** Tasks run in the original configured workspace with `--dangerously-skip-permissions`. Set **`isolation: true`** for a separate working copy, or select **`execution_mode: "analysis"`** for read-only inputs.
 
@@ -12,11 +12,11 @@ Headless mode by itself does not approve every tool action. The wrapper passes t
 
 **Full local audit logging is also enabled by default.** It retains MCP requests/responses, selected inputs, CLI streams and terminal results after shutdown. Logs rotate without automatic deletion. Use `--no-audit` or `auditLogging: false` to disable wrapper logging completely. See [audit logging](docs/audit.md) for storage, privacy and failure behavior.
 
-Version 0.2 is experimental. It uses your installed `agy` and cached login on Linux, macOS or Windows. This community project has no Google affiliation and does not implement Google's private model APIs or change account overage settings.
+Version 0.3 is experimental. It uses your installed `agy` and cached login on Linux, macOS or Windows. This community project has no Google affiliation and does not implement Google's private model APIs or change account overage settings.
 
 ## Why this exists
 
-I built this because the Google Antigravity CLI in my Google One Ultra 20X subscription is awkward to use. The model allowance is generous; my patience with the CLI is less so. This wrapper lets Codex or Claude Code handle task submission, progress and reports through MCP, while the official CLI does the model work.
+I built this because the Google Antigravity CLI in my Google One Ultra 20X subscription is awkward to use. The model allowance is generous; my patience with the CLI is less so. This wrapper lets Codex or Claude Code handle task submission, progress and answers through MCP, while the official CLI does the model work.
 
 ## Install
 
@@ -35,8 +35,8 @@ CI runs native compilation, lint, tests and packaging for all six targets. Linux
 The release includes an npm package that works without an npm registry publication. With Node.js 20.11 or newer and npm installed:
 
 ```bash
-npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.1/antigravity-worker-mcp-0.2.1.tgz antigravity-worker-mcp --version
-npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.1/antigravity-worker-mcp-0.2.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.3.0/antigravity-worker-mcp-0.3.0.tgz antigravity-worker-mcp --version
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.3.0/antigravity-worker-mcp-0.3.0.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
 ```
 
 The dependency-free Node launcher downloads the matching Rust archive, verifies its release SHA-256, and caches the extracted executable and documentation. Later launches verify the cached executable before using it. Arguments, working directory, environment and stdin/stdout pass through to Rust; download messages use stderr. The official `agy` still needs a separate installation and login. Unix extraction requires `tar`; Windows uses PowerShell. Linux musl systems and older glibc need a source build.
@@ -83,8 +83,8 @@ claude mcp add --scope user antigravity-worker -- /absolute/path/antigravity-wor
 Or register the npm launcher on Linux/macOS:
 
 ```bash
-codex mcp add antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.1/antigravity-worker-mcp-0.2.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
-claude mcp add --scope user antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.2.1/antigravity-worker-mcp-0.2.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+codex mcp add antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.3.0/antigravity-worker-mcp-0.3.0.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+claude mcp add --scope user antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.3.0/antigravity-worker-mcp-0.3.0.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
 ```
 
 On Windows, register `cmd /c npx` in place of `npx` so the MCP host can launch npm's command shim. Run the `--version` command once before registration to populate the native executable cache.
@@ -102,13 +102,17 @@ claude mcp remove --scope user antigravity-worker
 
 The [verification record](docs/verification.md) distinguishes tested MCP protocol behavior from actual host-client sessions. Installing this repository does not modify either client's global configuration automatically.
 
+## Simple invocation
+
+Only `instructions` is required. The task text is sent unchanged, and the native answer can be text, Markdown, code or JSON. No report format or evidence schema is imposed. `root` defaults to the submitting connection's working directory; set it explicitly when the project location matters. `model` optionally selects a native slug; `kind` is an optional label with no effect on execution.
+
 ## Tools
 
 | Tool | Behavior |
 | --- | --- |
 | `ag_submit` | Queue a task and return its ID without waiting for the model. |
 | `ag_status` | Read state, deadlines, progress counters and failure indicators. |
-| `ag_result` | Read an unverified report or patch in character pages. |
+| `ag_result` | Read the original agent answer or optional patch in character pages. |
 | `ag_cancel` | Request cancellation; report whether supervised cleanup finished. |
 | `ag_list` | Find shared job IDs and page their status metadata. |
 | `ag_resume` | Clear a shared quota pause after checking provider availability. |
@@ -119,13 +123,8 @@ Default automatic execution:
 
 ```json
 {
-  "kind": "code",
-  "root": "/absolute/path/to/project",
-  "instructions": "Implement the scoped change and report the checks performed.",
-  "isolation": false,
-  "model_profile": "fast",
-  "timeout_seconds": 0,
-  "idempotency_key": "scoped-change-001"
+  "instructions": "Inspect this project and explain how it works.",
+  "root": "/absolute/path/to/project"
 }
 ```
 
@@ -133,7 +132,6 @@ Optional working copy:
 
 ```json
 {
-  "kind": "code",
   "root": "/absolute/path/to/project",
   "files": ["src/example.rs", "Cargo.toml"],
   "instructions": "Implement the scoped change and report the checks performed.",
@@ -143,7 +141,7 @@ Optional working copy:
 
 `timeout_seconds: 0` disables the deadline. Omit it to use `timeoutSeconds`, which defaults to zero. A positive value enables an optional deadline including queue time, with no 900-second cap. A client tool-call timeout covers each control request, not the background task. Supply the same `idempotency_key` when retrying an uncertain submission; a different task with that key is rejected.
 
-Follow `next_offset` in `ag_result`; use `section: "patch"` for the working-copy patch. Review the complete patch before applying it. All model reports carry `verification_status: "unverified"`; the host agent must verify findings and test claims.
+Follow `next_offset` in `ag_result`; use `section: "patch"` for the working-copy patch. Review the complete patch before applying it. All results carry `verification_status: "unverified"`; the host agent evaluates the answer and checks any claimed effects.
 
 Isolated mode copies only selected UTF-8 files, up to 100 files, 256 KiB each and 4 MiB total. It does not copy the complete repository, `.git`, local settings, secrets or installed dependencies. Include materials needed for checks and use `runtimePaths` to mount additional toolchain directories read-only. Host mode can use the original full project.
 
@@ -157,7 +155,7 @@ Isolated mode copies only selected UTF-8 files, up to 100 files, 256 KiB each an
 
 Workspace and analysis modes require Linux. macOS and Windows reject isolation requests with `ISOLATION_UNSUPPORTED`; they do not silently run them on the host.
 
-`allowHostExecution` defaults to true. Set it to false to reject host tasks. The host root allowlist validates the starting directory, not paths later accessed by commands. Client-side tool approval remains controlled by the MCP host.
+`allowHostExecution` defaults to true. Set it to false to reject host tasks. The starting-directory allowlist is disabled when allowedRoots is absent or empty. An explicitly configured list validates only the initial directory. Client-side tool approval remains controlled by the MCP host.
 
 Isolated execution keeps the original project outside the mount namespace, but exposes system programs, configured runtimes, network access and the CLI's read-only authentication file. It is not a network firewall or an exfiltration barrier against hostile tasks. Host cancellation covers the supervised CLI and process group; detached services and external side effects can remain. A runner crash or reboot is reported as interrupted work, without automatic replay.
 
@@ -165,7 +163,7 @@ Windows first attempts direct Job Object breakaway. If the client prevents it, `
 
 Jobs run in detached supervisor processes and survive the submitting client disconnecting. Clients using the same private `stateDirectory` can query or cancel the same job. Reports and patches are stored locally and do not expire by default. `retentionSeconds` can enable expiry; `ag_forget` frees a terminal result slot without removing audit logs or its idempotency record. `maxJobs` bounds retained results, so a full store rejects new submissions instead of silently deleting reports. Full audit logs persist independently in the private state directory; they include task instructions and observed tool output. Isolated CLI history is temporary. Default host mode uses the official CLI's normal history and retention settings. Disabling wrapper logs does not change client, CLI or provider retention.
 
-The underlying CLI is an autonomous agent. The wrapper adds input context and a final report format, without extra behavioral instructions or a host-tool allowlist. The agent chooses its commands, reads and working steps. Audit logs record those actions; they do not veto them. Reports remain `unverified`; inspect actual results and side effects.
+The underlying CLI is an autonomous agent. The wrapper passes task instructions unchanged and returns the original answer. It adds no report schema, task categories or host-tool allowlist. The agent chooses its commands, reads and working steps. Audit logs record those actions; they do not veto them. Results remain `unverified`; inspect actual results and side effects.
 
 Instances sharing one `stateDirectory` share one execution lock and serialize CLI jobs. The queue, results and quota pause are shared. Scheduling follows submission order. Different directories or machines have independent locks. Quota/capacity failures hold queued jobs until explicit `ag_resume`; failed jobs are never replayed. Token usage is reported when available; remaining subscription quota is unknown.
 

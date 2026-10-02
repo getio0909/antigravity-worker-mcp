@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Pass task instructions unchanged and preserve native text, Markdown, code and JSON answers. Remove the required report schema, evidence validator, report prompt and answer rewriting.
+- Require only instructions. Make kind an arbitrary optional label, resolve omitted root from the submitting connection, and support an optional native model slug.
+- Disable the starting-directory allowlist when allowedRoots is absent or empty; explicit lists remain opt-in.
+- Follow terminal CLI status and exit code without overriding successful recovery from intermediate tool or permission diagnostics.
+- Remove deprecated summary, finding-preview and limitations fields from ag_result. Existing stored text and historical states remain readable without replay.
+- Keep unlimited detached execution, cancellation, optional Linux isolation and full retained audit logging.
+
 ## 0.2.1
 
 - Support Windows MCP hosts that refuse direct Job Object breakaway through a temporary current-user Task Scheduler launch. The existing interactive sign-in supplies authentication; no password or task-input file is created.

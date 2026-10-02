@@ -1,5 +1,13 @@
 # Verification record
 
+## Version 0.3 invocation and output
+
+Local source checks passed twenty Rust checks, seven npm launcher checks, warning-free native Clippy and Windows cross-target Clippy. The native protocol test requires only instructions, resolves the submitting cwd and operates without a configured starting-directory allowlist. Original-answer paging covers plain text, Markdown, unrelated JSON and an old-report-shaped body with invalid evidence; all complete successfully and remain byte-for-byte text. A recovered permission diagnostic no longer overrides terminal CLI success.
+
+The runtime passes instructions unchanged and does not supply --json-schema. The old report types, field validator and preview generator were removed. Existing stored answers remain readable, with historical errors preserved and no automatic replay. A real Flash High task also completed in 14,375 ms. It wrote the independently checked five-byte result, returned a 371-character non-JSON answer and reported SUCCESS with exit code zero. Captured CLI input matched the submitted task exactly; the full MCP answer matched the native terminal response exactly. The initial MCP connection closed after submission, and a new connection retrieved the result. A separate Gemini 3.8 Flash High design discussion completed in 99,660 ms with a 13,027-character native Markdown answer. It supported keeping lifecycle, transport and audit responsibilities in the bridge while leaving answer interpretation to the caller. Its references to the current project make it an advisory discussion, not a blind review or quality benchmark. Captured task text and returned answer both matched their native counterparts exactly. Final installed-client acceptance is not yet recorded for this version.
+
+## Version 0.2.1 retained evidence
+
 Recorded on 2026-10-02 for experimental version 0.2.1. Native CI, real provider execution, client integration and independent file checks provide separate evidence. A completed model report remains unverified until its claims and effects are checked.
 
 ## Release and engineering checks

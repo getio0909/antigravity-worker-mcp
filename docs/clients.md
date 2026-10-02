@@ -52,7 +52,7 @@ For a temporary connection, pass a JSON configuration using `--mcp-config` and `
 
 `claude --print --no-session-persistence` supports headless invocation without saving the host session. MCP-tool approval remains a Claude Code setting; `--allowedTools` can authorize the selected server's tools for an invocation. For later sessions, add `mcp__antigravity-worker__*` to `permissions.allow` in the user settings, preserving existing rules. This authorizes all tools from this server. See [Claude Code permissions](https://code.claude.com/docs/en/permissions). These controls do not disable wrapper audit logging. Existing Claude account authentication and the CLI's Google authentication are independent.
 
-Server working directories depend on Claude Code's configuration scope. Use absolute server/configuration paths and explicit configured `allowedRoots` plus task `root`; do not infer the project root from the server's inherited directory. The headless `--bare` mode skips OAuth/keychain lookup, so it is unsuitable for a check relying on an existing subscription login without separate credentials. See [Claude Code MCP](https://code.claude.com/docs/en/mcp) and [headless execution](https://code.claude.com/docs/en/headless).
+Server working directories depend on Claude Code's configuration scope. Use absolute server/configuration paths and an explicit task `root` when the cwd matters. `allowedRoots` is optional; an absent or empty list disables the starting-directory allowlist. A missing `root` uses the MCP process's cwd, which may differ from the intended project. The headless `--bare` mode skips OAuth/keychain lookup, so it is unsuitable for a check relying on an existing subscription login without separate credentials. See [Claude Code MCP](https://code.claude.com/docs/en/mcp) and [headless execution](https://code.claude.com/docs/en/headless).
 
 ## CC Switch
 
@@ -80,6 +80,10 @@ Manage removal through CC Switch so its stored registration and both client file
 Replace the native command with the versioned npx command in the [README](../README.md). On Windows, use `cmd /c npx` to launch npm's command shim. An initial network download adds startup latency; run the README's `--version` command once before adding the server.
 
 Linux supports all three execution modes. macOS and Windows explicitly reject workspace/analysis isolation rather than switching to host mode. Client connection success does not establish model correctness or task-scope compliance. Inspect the actual changes and [audit trace](audit.md), including when a task returns `completed`.
+
+## Simple tasks
+
+`ag_submit` only requires `instructions`. They go to the CLI unchanged. Use `root` for a specific project or `model` for a native model slug. Read the answer from `ag_result.text`; it can be ordinary text, Markdown, code or JSON. Version 0.3 removes required report fields and does not replay old tasks.
 
 ## Background delegation
 

@@ -71,7 +71,7 @@ impl Server {
         }
     }
     #[tool(
-        description = "Delegate a background task to the autonomous Antigravity CLI. Default: no isolation, full current-user permissions, automatic execution, no task deadline. Jobs survive MCP disconnection and are shared by clients using the same state directory. Use an idempotency_key for safe submission retries, isolation=true for a working copy, or analysis for read-only inputs. Results require independent review.",
+        description = "Run a task with the autonomous Antigravity CLI. instructions is the only required field and is passed unchanged. root defaults to this MCP connection's working directory; kind is an optional label. Default: no isolation, automatic execution, no task deadline. Jobs survive client disconnection. Returns a job ID; use ag_status and ag_result to collect the original answer.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -90,7 +90,7 @@ impl Server {
         reply(self.broker.status(&id.job_id))
     }
     #[tool(
-        description = "Read an unverified report or patch in Unicode character pages. limit is 1-16000 (default 8000); offset counts characters. Follow next_offset for subsequent pages. Completion does not certify correctness.",
+        description = "Read the original agent answer or an optional workspace patch. Text, Markdown, code and JSON are preserved without report validation. limit is 1-16000 (default 8000); offset counts Unicode characters. Follow next_offset to retrieve the whole answer. CLI completion does not certify its claims.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn ag_result(&self, Parameters(args): Parameters<ResultArgs>) -> CallToolResult {

@@ -32,15 +32,6 @@ pub enum Mode {
     #[default]
     Host,
 }
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Kind {
-    RepositoryAnalysis,
-    Review,
-    Research,
-    Extraction,
-    Code,
-}
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Profile {
@@ -51,7 +42,8 @@ pub enum Profile {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Submission {
-    pub kind: Kind,
+    /// Optional caller label. It does not select behavior or change the prompt.
+    pub kind: Option<String>,
     pub instructions: String,
     #[serde(default)]
     pub execution_mode: Mode,
@@ -62,6 +54,9 @@ pub struct Submission {
     pub files: Vec<String>,
     #[serde(default)]
     pub model_profile: Profile,
+    /// Optional native model slug; overrides the configured profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// Zero disables the deadline. Omitted values use timeoutSeconds, which defaults to zero.
     pub timeout_seconds: Option<u64>,
     /// Reuse a key when retrying the same submission after losing its acknowledgement.
@@ -71,6 +66,22 @@ impl Submission {
     pub fn resolve_mode(&mut self) {
         if self.isolation && self.execution_mode != Mode::Analysis {
             self.execution_mode = Mode::Workspace;
+        }
+    }
+    pub fn resolve_root(&mut self) -> Outcome<()> {
+        if self.root.is_none() && (self.execution_mode == Mode::Host || !self.files.is_empty()) {
+            self.root = Some(std::env::current_dir().map_err(io_failure)?);
+        }
+        Ok(())
+    }
+    pub fn model(&self, config: &Config) -> Outcome<String> {
+        match &self.model {
+            Some(model) if !model.is_empty() && model.len() <= 128 => Ok(model.clone()),
+            Some(_) => Err(Failure::new(
+                "INPUT_INVALID",
+                "The model slug is empty or too long.",
+            )),
+            None => config.model(self.model_profile),
         }
     }
     pub fn validate(&self) -> Outcome<()> {
@@ -288,37 +299,6 @@ impl Config {
         })
     }
 }
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Evidence {
-    pub file: Option<String>,
-    pub line: Option<usize>,
-    pub url: Option<String>,
-    pub excerpt: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum Severity {
-    Info,
-    Low,
-    Medium,
-    High,
-}
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Finding {
-    pub title: String,
-    pub detail: String,
-    pub severity: Severity,
-    pub evidence: Vec<Evidence>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Report {
-    pub summary: String,
-    pub findings: Vec<Finding>,
-    pub limitations: Vec<String>,
-}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestEntry {
     pub path: String,
@@ -331,7 +311,6 @@ pub struct RunResult {
     pub exit_code: Option<i32>,
     pub duration_ms: Option<u64>,
     pub response: String,
-    pub report: Option<Report>,
     pub manifest: Vec<ManifestEntry>,
     pub model: String,
     pub actual_model: Option<String>,
@@ -348,7 +327,6 @@ impl RunResult {
             duration_ms: None,
             model,
             response: String::new(),
-            report: None,
             manifest: vec![],
             actual_model: None,
             usage: None,

@@ -34,6 +34,13 @@ fn main() {
     if text.contains("CASE:audit") {
         eprintln!("Synthetic audit diagnostic.");
     }
+    if text.contains("CASE:recovered-denial") {
+        eprintln!("Synthetic permission denied diagnostic; the agent continued successfully.");
+        println!(
+            "{}",
+            json!({"event":"step_update","step_update":{"state":"DONE","step_type":"tool","tool_info":{"error":"permission denied"}}})
+        );
+    }
     if text.contains("CASE:malformed") {
         println!("invalid-json");
         return;
@@ -88,13 +95,23 @@ fn main() {
         assert!(!std::path::Path::new("/work").exists());
         fs::write(work.join("direct.txt"), "host-execution-enabled\n").unwrap();
     }
-    let report = json!({"summary":"Fixture report \u{e9}\u{1f680}","findings":[],"limitations":[]});
+    assert!(!args.iter().any(|a| a == "--json-schema"));
+    let response = if text.contains("CASE:echo") {
+        text.to_owned()
+    } else if text.contains("CASE:working-directory") {
+        std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        "Fixture answer é🚀\n".to_owned()
+    };
     println!(
         "{}",
         json!({"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"ok"}})
     );
     println!(
         "{}",
-        json!({"event":"result","result":{"status":"SUCCESS","response":report.to_string(),"structured_output":report,"denied_actions":denied,"usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}})
+        json!({"event":"result","result":{"status":"SUCCESS","response":response,"denied_actions":denied,"usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}})
     );
 }

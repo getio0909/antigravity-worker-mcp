@@ -1,6 +1,6 @@
 {
   "name": "antigravity-worker-mcp",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Launch the native Rust MCP worker for the official Google Antigravity CLI",
   "type": "module",
   "bin": {

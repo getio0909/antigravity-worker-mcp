@@ -130,13 +130,15 @@ async fn optional_isolation_returns_applicable_patch_without_changing_source() {
 }
 #[tokio::test]
 #[cfg(target_os = "linux")]
-async fn analysis_denial_is_failure_even_with_zero_exit() {
+async fn analysis_mounts_protect_inputs_without_overriding_cli_completion() {
     let c = Context::new(8);
     let id = c
         .submit("CASE:readonly", json!({"execution_mode":"analysis"}))
         .unwrap();
     let r = c.wait(&id).await;
-    assert_eq!(r["error"]["code"], "PERMISSION_DENIED");
+    assert_eq!(r["state"], "completed");
+    assert_eq!(r["cli_status"], "SUCCESS");
+    assert!(r["error"].is_null());
     assert_eq!(
         fs::read_to_string(c.dir.path().join("source/example.txt")).unwrap(),
         "original\n"
@@ -340,39 +342,62 @@ async fn isolation_is_rejected_without_host_fallback() {
     c.worker.shutdown().await;
 }
 #[tokio::test]
-async fn unicode_pagination_delivers_complete_report() {
+async fn unicode_pagination_delivers_original_answer() {
     let c = Context::new(8);
-    let id = c.submit("fixture", json!({})).unwrap();
-    let r = c.wait(&id).await;
-    let full = r["text"].as_str().unwrap();
-    let mut text = String::new();
-    let mut offset = 0;
-    loop {
-        let v = c.worker.result(&id, offset, 3, false).unwrap();
-        text.push_str(v["text"].as_str().unwrap());
-        if let Some(next) = v["next_offset"].as_u64() {
-            offset = next as usize;
-        } else {
-            break;
+    for input in [
+        "CASE:echo\nPlain answer é🚀\n",
+        "CASE:echo\n# Answer\n\n```rust\nfn main() {}\n```\n",
+        "CASE:echo\n{\"unrelated\": [1, 2], \"nested\": {\"text\": \"é🚀\"}}\n",
+        "CASE:echo CASE:recovered-denial\n{\"summary\":\"Answer\",\"findings\":[{\"evidence\":[{}]}]}\n",
+    ] {
+        let id = c
+            .submit(
+                input,
+                json!({"kind":"arbitrary-label","model":"fixture-native"}),
+            )
+            .unwrap();
+        let r = c.wait(&id).await;
+        assert_eq!(r["state"], "completed", "{r}");
+        assert_eq!(r["text"], input);
+        assert_eq!(r["actual_model"], "fixture-native");
+        assert!(r.get("findings_preview").is_none());
+        let mut text = String::new();
+        let mut offset = 0;
+        loop {
+            let v = c.worker.result(&id, offset, 3, false).unwrap();
+            text.push_str(v["text"].as_str().unwrap());
+            if let Some(next) = v["next_offset"].as_u64() {
+                offset = next as usize;
+            } else {
+                break;
+            }
         }
+        assert_eq!(text, input);
     }
-    assert_eq!(text, full);
-    assert!(text.contains("\u{e9}\u{1f680}"));
     c.worker.shutdown().await;
 }
 #[tokio::test]
 async fn real_stdio_discovery_paging_and_shutdown() {
     use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
     let c = Context::new(8);
+    let config_path = c.dir.path().join("config.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    config["allowedRoots"] = json!([]);
+    fs::write(&config_path, config.to_string()).unwrap();
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_antigravity-worker-mcp"));
     command.args([
         "--config",
         c.dir.path().join("config.json").to_str().unwrap(),
     ]);
+    command.current_dir(c.dir.path().join("source"));
     let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
     let tools = client.list_all_tools().await.unwrap();
     assert_eq!(tools.len(), 8);
-    assert!(tools.iter().any(|t| t.name == "ag_submit"));
+    let submit = tools.iter().find(|t| t.name == "ag_submit").unwrap();
+    assert_eq!(
+        submit.input_schema.get("required").unwrap(),
+        &json!(["instructions"])
+    );
     let caps = client
         .call_tool(CallToolRequestParams::new("ag_capabilities"))
         .await
@@ -386,7 +411,11 @@ async fn real_stdio_discovery_paging_and_shutdown() {
         caps.structured_content.as_ref().unwrap()["default_isolation"],
         false
     );
-    let args = json!({"kind":"review","root":c.dir.path().join("source"),"instructions":"fixture"});
+    assert_eq!(
+        caps.structured_content.as_ref().unwrap()["root_allowlist_enabled"],
+        false
+    );
+    let args = json!({"instructions":"CASE:working-directory"});
     let req =
         CallToolRequestParams::new("ag_submit").with_arguments(args.as_object().unwrap().clone());
     let submitted = client.call_tool(req).await.unwrap();
@@ -425,10 +454,26 @@ async fn real_stdio_discovery_paging_and_shutdown() {
     assert_eq!(v["next_offset"], 5);
     assert_eq!(v["text"].as_str().unwrap().chars().count(), 5);
     assert_eq!(v["verification_status"], "unverified");
+    let whole = client
+        .call_tool(
+            CallToolRequestParams::new("ag_result")
+                .with_arguments(json!({"job_id":id}).as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(
+        whole["text"],
+        fs::canonicalize(c.dir.path().join("source"))
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
     client.cancel().await.unwrap();
     let incoming = String::from_utf8(audit_bytes(&audit_path, "mcp.stdin")).unwrap();
     let outgoing = String::from_utf8(audit_bytes(&audit_path, "mcp.stdout")).unwrap();
-    assert!(incoming.contains("ag_submit") && incoming.contains("fixture"));
+    assert!(incoming.contains("ag_submit") && incoming.contains("CASE:working-directory"));
     assert!(outgoing.contains("unverified") && outgoing.contains("default_isolation"));
     c.worker.shutdown().await;
 }
@@ -471,7 +516,7 @@ async fn full_audit_survives_shutdown_and_keeps_complete_task_materials() {
     let stderr =
         String::from_utf8(audit_bytes(&directory, &format!("{prefix}.cli.stderr"))).unwrap();
     assert!(stdin.contains("CASE:audit"));
-    assert!(stdout.contains("structured_output") && stdout.contains("SUCCESS"));
+    assert!(stdout.contains("Fixture answer") && stdout.contains("SUCCESS"));
     assert!(stderr.contains("Synthetic audit diagnostic."));
     let events = String::from_utf8(audit_bytes(&directory, "events")).unwrap();
     assert!(

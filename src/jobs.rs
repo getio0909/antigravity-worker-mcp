@@ -35,7 +35,7 @@ impl State {
 }
 struct Job {
     state: State,
-    kind: Kind,
+    kind: Option<String>,
     mode: Mode,
     submitted: u64,
     started: Option<u64>,
@@ -125,6 +125,7 @@ impl Worker {
         submitted: u64,
     ) -> Outcome<Value> {
         input.resolve_mode();
+        input.resolve_root()?;
         input.validate()?;
         if self.closed.load(Ordering::Relaxed) {
             return Err(Failure::new("SERVER_CLOSED", "Server is shutting down."));
@@ -141,7 +142,7 @@ impl Worker {
                 "Host mode is disabled; request isolation or enable host execution in configuration.",
             ));
         }
-        self.config.model(input.model_profile)?;
+        input.model(&self.config)?;
         if input.execution_mode == Mode::Host {
             crate::snapshot::allowed_root(&self.config, input.root.as_deref())?;
         }
@@ -208,7 +209,7 @@ impl Worker {
         deadline: Option<Instant>,
         cancel: CancellationToken,
     ) {
-        let model = self.config.model(input.model_profile).unwrap_or_default();
+        let model = input.model(&self.config).unwrap_or_default();
         let result = self.run_inner(&id, &input, deadline, &cancel).await;
         let mut result = match result {
             Ok(r) => r,
@@ -414,20 +415,11 @@ pub fn result_page(
     };
     let total = text.chars().count();
     let page: String = text.chars().skip(offset).take(limit).collect();
-    let preview: Vec<_> = if offset == 0 && !patch {
-        r.report.as_ref().map(|v| v.findings.iter().take(3).map(|f| {
-            let evidence: Vec<_> = f.evidence.iter().take(3).map(|e| json!({"file":e.file,"line":e.line,"url":e.url,"excerpt":e.excerpt.chars().take(400).collect::<String>()})).collect();
-            json!({"title":f.title,"severity":f.severity,"detail":f.detail.chars().take(1000).collect::<String>(),"evidence":evidence})
-        }).collect()).unwrap_or_default()
-    } else {
-        vec![]
-    };
     Ok(
         json!({"job_id":id,"state":status["state"],"ready":true,"completion":if status["state"]=="completed"{"complete"}else{"incomplete"},"verification_status":"unverified",
             "model":r.model,"actual_model":r.actual_model,"cli_status":r.cli_status,"usage":r.usage,"error":r.error,
             "exit_code":r.exit_code,"duration_ms":r.duration_ms,"audit_logging":audit_logging,"audit_directory":audit_directory,"audit_stream_prefix":audit_logging.then(||format!("job-{id}")),
-            "summary":r.report.as_ref().map(|v|&v.summary),"findings_preview":preview,"findings_count":r.report.as_ref().map_or(0,|v|v.findings.len()),
-            "limitations":r.report.as_ref().map(|v|&v.limitations),"manifest":if offset==0{r.manifest.clone()}else{vec![]},
+            "manifest":if offset==0{r.manifest.clone()}else{vec![]},
             "section":if patch{"patch"}else{"response"},"text":page,"next_offset":if offset.saturating_add(limit)<total{Some(offset+limit)}else{None},"total_characters":total,
             "patch_available":r.patch.as_ref().is_some_and(|p|!p.is_empty()),"patch_truncated":r.patch_truncated,"expires_at":expires_at}),
     )

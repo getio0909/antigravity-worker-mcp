@@ -57,12 +57,18 @@ pub fn allowed_root(config: &Config, root: Option<&Path>) -> Outcome<PathBuf> {
     let root = root.filter(|p| p.is_absolute()).ok_or_else(|| {
         Failure::new(
             "INPUT_SCOPE_INVALID",
-            "An absolute allowed root is required.",
+            "The working directory must be absolute.",
         )
     })?;
     let canonical = fs::canonicalize(root)
         .map_err(|_| Failure::new("INPUT_SCOPE_INVALID", "Cannot resolve the selected root."))?;
-    if !config.allowed_roots.contains(&canonical) {
+    if !canonical.is_dir() {
+        return Err(Failure::new(
+            "INPUT_SCOPE_INVALID",
+            "The selected working directory is not a directory.",
+        ));
+    }
+    if !config.allowed_roots.is_empty() && !config.allowed_roots.contains(&canonical) {
         return Err(Failure::new(
             "INPUT_SCOPE_INVALID",
             "The selected root is not allowed by the server configuration.",
@@ -269,71 +275,6 @@ pub fn copy_tree(source: &Path, target: &Path) -> Outcome<()> {
     }
     Ok(())
 }
-pub fn validate_report(
-    value: serde_json::Value,
-    manifest: &[ManifestEntry],
-    mode: Mode,
-) -> Outcome<Report> {
-    let report: Report = serde_json::from_value(value).map_err(|_| {
-        Failure::new(
-            "RESULT_SCHEMA_INVALID",
-            "CLI did not return the required report schema.",
-        )
-    })?;
-    if report.summary.is_empty()
-        || report.summary.chars().count() > 8000
-        || report.findings.len() > 100
-        || report.limitations.len() > 30
-        || report.limitations.iter().any(|s| s.chars().count() > 2000)
-    {
-        return Err(Failure::new(
-            "RESULT_SCHEMA_INVALID",
-            "Report exceeded its field limits.",
-        ));
-    }
-    for f in &report.findings {
-        if f.title.chars().count() > 300 || f.detail.chars().count() > 4000 || f.evidence.len() > 20
-        {
-            return Err(Failure::new(
-                "RESULT_SCHEMA_INVALID",
-                "Finding exceeded its field limits.",
-            ));
-        }
-        for e in &f.evidence {
-            if e.excerpt.chars().count() > 2000
-                || (e.file.is_none() && e.url.is_none())
-                || e.url.as_ref().is_some_and(|u| {
-                    u.len() > 2048 || !(u.starts_with("https://") || u.starts_with("http://"))
-                })
-            {
-                return Err(Failure::new(
-                    "EVIDENCE_INVALID",
-                    "Evidence requires a selected file or HTTP(S) URL.",
-                ));
-            }
-            if let Some(path) = &e.file {
-                if path.chars().count() > 512 {
-                    return Err(Failure::new(
-                        "EVIDENCE_INVALID",
-                        "File evidence path exceeds its limit.",
-                    ));
-                }
-                if mode != Mode::Host {
-                    let path = path.strip_prefix("/work/").unwrap_or(path);
-                    let found = manifest.iter().find(|m| m.path == path);
-                    if !found.is_some_and(|m| e.line.is_some_and(|n| n > 0 && n <= m.lines)) {
-                        return Err(Failure::new(
-                            "EVIDENCE_INVALID",
-                            "File evidence must cite captured files and existing line ranges.",
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    Ok(report)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,13 +291,5 @@ mod tests {
         ] {
             assert!(relative_parts(p).is_err());
         }
-    }
-    #[test]
-    fn invalid_evidence() {
-        let v = serde_json::json!({"summary":"Review","findings":[{"title":"Finding","detail":"Sample","severity":"low","evidence":[{"file":"absent","line":5,"excerpt":"sample"}]}],"limitations":[]});
-        assert_eq!(
-            validate_report(v, &[], Mode::Workspace).unwrap_err().code,
-            "EVIDENCE_INVALID"
-        );
     }
 }

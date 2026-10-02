@@ -5,7 +5,7 @@ The executable has two roles: an ephemeral RMCP stdio adapter and one detached s
 ## Design principles
 
 - Task duration and MCP request duration are separate. Submission returns a job ID; polling does not wait for inference. Tasks have no deadline by default.
-- The official CLI remains autonomous. Default host mode inherits the current user's environment, settings and native automatic permissions. Task context and report formatting add no behavioral policy.
+- The official CLI remains autonomous. Default host mode inherits the current user's environment, settings and native automatic permissions. Task instructions and native answers pass through unchanged, with no report template or semantic validator.
 - Acceptance reserves one job identity before dispatch. An optional caller key deduplicates retries, including after response loss, failure or result expiry. The wrapper never automatically replays interrupted work.
 - Runtime locks are the authority for ownership. Recovery does not signal a saved PID, avoiding accidental termination after PID reuse.
 - Reports, job metadata and raw audit streams have separate retention. Capacity exhaustion rejects new work without silently discarding reports.
@@ -25,7 +25,7 @@ Idempotency indexes store a hash of the caller key and its job ID. Fingerprints 
 
 ## Execution and isolation
 
-Host mode is the default. The root allowlist checks only the starting directory. Existing CLI hooks, plugins, MCP connections, history and overage settings may apply. The wrapper does not add commits, deployments or rollback operations.
+Host mode is the default. An absent or empty root allowlist permits any existing starting directory. Explicit nonempty lists check only that directory. The submitting connection resolves its default cwd before detaching. Existing CLI hooks, plugins, MCP connections, history and overage settings may apply. The wrapper does not add commits, deployments or rollback operations.
 
 Linux workspace mode copies selected files into a private directory mounted at `/work`. A baseline outside the namespace supplies its patch. Analysis mounts the input copy read-only; writable scratch space remains available. Both use automatic CLI permissions and accept-edits mode. Attempts to modify read-only inputs fail at the mount boundary.
 
@@ -49,7 +49,7 @@ Lost ownership produces `RUNNER_INTERRUPTED`, preserving available audit materia
 
 ## Storage and output
 
-Task streams have no cumulative byte ceiling. Each NDJSON event is bounded at 2 MiB, the final report has field limits, and retained diagnostic text is bounded. Raw audit streams rotate without deletion. Version/catalog queries and patch generation retain bounded output. Commands have no wrapper CPU, memory or disk quotas.
+Task streams have no cumulative byte ceiling. Each NDJSON event is bounded at 2 MiB, the native answer has no report field schema, and retained diagnostic text is bounded. Raw audit streams rotate without deletion. Version/catalog queries and patch generation retain bounded output. Commands have no wrapper CPU, memory or disk quotas.
 
 Results do not expire by default. Positive `retentionSeconds` starts expiry after completion, never during execution. `ag_forget` discards a terminal result and frees capacity. Metadata, deduplication indexes and enabled audit logs remain. New work fails with `RESULT_STORE_FULL` at `maxJobs`; active work is never evicted.
 

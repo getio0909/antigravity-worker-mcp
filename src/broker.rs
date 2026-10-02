@@ -145,6 +145,7 @@ impl Broker {
     }
     pub async fn submit(&self, mut input: Submission) -> Outcome<Value> {
         input.resolve_mode();
+        input.resolve_root()?;
         input.validate()?;
         if input.execution_mode == Mode::Host && !self.config.allow_host_execution {
             return Err(Failure::new(
@@ -155,7 +156,7 @@ impl Broker {
         if input.execution_mode == Mode::Host {
             crate::snapshot::allowed_root(&self.config, input.root.as_deref())?;
         }
-        let model = self.config.model(input.model_profile)?;
+        let model = input.model(&self.config)?;
         let submitted = jobs::now();
         let seconds = input.timeout_seconds.unwrap_or(self.config.timeout_seconds);
         let deadline = jobs::deadline(submitted, seconds)?;

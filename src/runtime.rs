@@ -26,7 +26,6 @@ pub struct EventParser {
     pub progress: Progress,
     pub result: Option<Value>,
     pub model: Option<String>,
-    pub denied: bool,
 }
 impl EventParser {
     pub fn push(&mut self, bytes: &[u8]) -> Outcome<()> {
@@ -65,21 +64,6 @@ impl EventParser {
             Some("init") => self.model = v["init"]["model"].as_str().map(String::from),
             Some("step_update") => {
                 self.progress.steps += 1;
-                if let Some(error) = v["step_update"]["tool_info"].get("error") {
-                    let s = error.to_string().to_lowercase();
-                    if [
-                        "denied",
-                        "permission",
-                        "not allowed",
-                        "read-only file system",
-                        "operation not permitted",
-                    ]
-                    .iter()
-                    .any(|p| s.contains(p))
-                    {
-                        self.denied = true;
-                    }
-                }
             }
             Some("result") => {
                 if self.result.is_some() || !v["result"].is_object() {
@@ -88,9 +72,6 @@ impl EventParser {
                         "Expected one result envelope for a single-turn job.",
                     ));
                 }
-                self.denied |= v["result"]["denied_actions"]
-                    .as_array()
-                    .is_some_and(|a| !a.is_empty());
                 self.result = Some(v["result"].clone());
             }
             _ => {}
@@ -628,7 +609,7 @@ pub async fn capabilities(
         json!({"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"isolation_supported":cfg!(target_os="linux"),"cli_version":if version.code==Some(0){Some(version.stdout.trim())}else{None},"models":catalog,
         "models_error":if models.code==Some(0){None}else{Some(classify(&models.stderr).code)},"configured_profiles":config.models,
         "execution_modes":supported_modes(config.allow_host_execution),
-        "default_execution_mode":"host","default_isolation":false,"skip_permissions":{"workspace":true,"analysis":true,"host":true},"default_timeout_seconds":config.timeout_seconds,"concurrency":1,"lock_scope":"same stateDirectory on one host",
+        "default_execution_mode":"host","default_isolation":false,"response_format":"native_text","task_instructions":"unchanged","root_allowlist_enabled":!config.allowed_roots.is_empty(),"skip_permissions":{"workspace":true,"analysis":true,"host":true},"default_timeout_seconds":config.timeout_seconds,"concurrency":1,"lock_scope":"same stateDirectory on one host",
         "quota":{"available":false,"reason":"No stable quota API; token usage is not remaining plan quota."},
         "limits":{"max_queue":config.max_queue,"max_jobs":config.max_jobs,"files":100,"file_bytes":262144,"input_bytes":4194304,"event_bytes":MAX_OUTPUT,"total_stream_bytes":null}}),
     )
@@ -652,7 +633,7 @@ pub async fn execute(
     capture: Capture,
 ) -> RunResult {
     let started = Instant::now();
-    let mut result = RunResult::empty(config.model(input.model_profile).unwrap_or_default());
+    let mut result = RunResult::empty(input.model(config).unwrap_or_default());
     if let Err(e) = execute_inner(
         config,
         input,
@@ -717,7 +698,6 @@ async fn execute_inner(
         args = sandbox(config, &work, &settings_path, input.execution_mode)?;
         args.push("/opt/agy".into());
     }
-    let schema = schemars::schema_for!(Report);
     args.extend([
         "--input-format".into(),
         "stream-json".into(),
@@ -731,26 +711,12 @@ async fn execute_inner(
         timeout
             .map_or_else(|| "0".into(), |v| format!("{}s", v.as_secs().max(1)))
             .into(),
-        "--json-schema".into(),
-        serde_json::to_string(&schema).map_err(io_failure)?.into(),
     ]);
     if input.execution_mode != Mode::Host {
         args.push("--disable-slash-commands".into());
     }
     args.push("--dangerously-skip-permissions".into());
-    let request = format!(
-        "Task type: {:?}. Execution mode: {:?}.\nWorkspace: {}.\nSelected files: {}\n\nTask:\n{}\n\nFinal report format: JSON matching the supplied schema, with summary (string), findings (array of objects), and limitations (array of strings). Findings contain title, detail, severity (info/low/medium/high), and evidence (array). Evidence entries contain file, line, url, and excerpt; use null for absent file, line, or url. An empty findings array is valid.",
-        input.kind,
-        input.execution_mode,
-        if host_root.is_some() {
-            "the configured workspace"
-        } else {
-            "/work"
-        },
-        serde_json::to_string(&input.files).unwrap_or_default(),
-        input.instructions
-    );
-    let body = json!({"event":"user","message":{"content":request}}).to_string() + "\n";
+    let body = json!({"event":"user","message":{"content":input.instructions}}).to_string() + "\n";
     let run = process_with_capture(
         &command,
         &args,
@@ -794,26 +760,6 @@ async fn execute_inner(
     {
         return Err(classify(&(envelope["error"].to_string() + &run.stderr)));
     }
-    if run.parser.denied
-        || ["soft-denied", "permission denied", "tool denied"]
-            .iter()
-            .any(|p| run.stderr.to_lowercase().contains(p))
-    {
-        return Err(Failure::new(
-            "PERMISSION_DENIED",
-            "A required operation was denied; the task is incomplete.",
-        ));
-    }
-    let report = envelope
-        .get("structured_output")
-        .cloned()
-        .unwrap_or_else(|| serde_json::from_str(&result.response).unwrap_or(Value::Null));
-    result.report = Some(snapshot::validate_report(
-        report,
-        &result.manifest,
-        input.execution_mode,
-    )?);
-    result.response = serde_json::to_string(&result.report).map_err(io_failure)?;
     if input.execution_mode == Mode::Workspace {
         let args = [
             "--no-pager",
