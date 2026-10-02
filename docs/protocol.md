@@ -48,6 +48,8 @@ Jobs belong to the submitting stdio connection. A second connection cannot query
 
 Completed jobs include model selection, CLI status, token usage if available, a summary, a bounded `findings_preview`, the total finding count, limitations, input fingerprints, a text page, and expiry. The complete validated report is serialized in `response`; previews are shortened and do not replace it. `patch_truncated: true` means the patch is incomplete.
 
+Terminal responses also include `exit_code`, `duration_ms`, `audit_logging`, `audit_directory` and `audit_stream_prefix`. Exit code and duration can be null if execution never started. Audit references are null when logging is disabled. Audit files remain after in-memory result expiry and are not served through MCP.
+
 Report shape:
 
 ```json
@@ -79,8 +81,10 @@ Input: `{ "job_id": "uuid" }`. Returns terminal state after cancelling and waiti
 
 No arguments. Queries the official CLI's version and live model catalog without inference. Reports platform, architecture, isolation support, available execution modes, configured profiles, `default_isolation: false`, `default_execution_mode: "host"`, resource limits, lock scope, and connection-local dispatch pause.
 
+Audit fields are `audit_logging`, `audit_connection_directory`, `audit_rotation_bytes` and `audit_auto_delete: false`. See the [audit contract](audit.md) for full retention, the off switch and failure behavior. `AUDIT_UNSAFE` rejects unsafe startup storage; `AUDIT_FAILED` stops dispatch and cancels affected supervised jobs after enabled log I/O fails.
+
 Remaining subscription quota is reported as unavailable. Token counts are not converted into remaining quota. A provider quota or capacity failure pauses new dispatch in that connection until restart.
 
 ## CLI compatibility
 
-The adapter uses `--input-format stream-json`, `--output-format stream-json`, `--model`, `--mode`, `--disable-slash-commands`, `--print-timeout`, and `--json-schema`. Host/workspace add `--dangerously-skip-permissions`. Requests are sent as stdin `user` events; output parses `init`, `step_update`, and one terminal `result`. Unknown event types are ignored. Malformed JSON, duplicate terminal results, missing success, permission denial, and field-limit failures are explicit failures.
+The adapter uses `--input-format stream-json`, `--output-format stream-json`, `--model`, `--mode`, `--print-timeout`, and `--json-schema`. Host/workspace add `--dangerously-skip-permissions`. Only isolated requests add `--disable-slash-commands`; host mode retains the CLI's normal custom-command behavior. Requests contain the task objective, input context and final report format, without extra behavioral instructions. Output parses `init`, `step_update`, and one terminal `result`. Unknown event types are ignored. Malformed JSON, duplicate terminal results, missing success, permission denial, and field-limit failures are explicit failures.

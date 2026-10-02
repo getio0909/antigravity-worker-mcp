@@ -6,6 +6,7 @@
     "deep": "REPLACE_WITH_A_SLUG_FROM_AGY_MODELS"
   },
   "allowHostExecution": true,
+  "auditLogging": true,
   "researchDomains": ["developers.google.com", "github.com"],
   "runtimePaths": [],
   "timeoutSeconds": 300,

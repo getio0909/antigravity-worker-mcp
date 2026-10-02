@@ -31,7 +31,7 @@ impl Context {
         fs::write(&config,json!({"agyPath":env!("CARGO_BIN_EXE_agy-fixture"),"allowedRoots":[root],"models":{"fast":"fixture-fast","deep":"fixture-deep"},"stateDirectory":state,"maxQueue":max_queue}).to_string()).unwrap();
         Self {
             dir,
-            worker: Worker::new(Config::load(&config).unwrap()),
+            worker: Worker::new(Config::load(&config).unwrap()).unwrap(),
         }
     }
     fn submit(
@@ -187,7 +187,7 @@ async fn queue_cancel_bounds_quota_and_model_validation() {
 #[tokio::test]
 async fn separate_workers_share_execution_lock() {
     let c = Context::new(8);
-    let other = Worker::new(c.worker.config.clone());
+    let other = Worker::new(c.worker.config.clone()).unwrap();
     let id = c.submit("CASE:wait", json!({})).unwrap();
     for _ in 0..100 {
         if c.worker.status(&id).unwrap()["progress"]["events"]
@@ -273,7 +273,7 @@ async fn host_toggle_model_and_result_store_limits() {
     config.models.deep = None;
     config.max_queue = 2;
     config.max_jobs = 2;
-    let worker = Worker::new(config);
+    let worker = Worker::new(config).unwrap();
     let host: Submission = serde_json::from_value(
         json!({"kind":"research","instructions":"fixture","root":c.dir.path().join("source")}),
     )
@@ -287,7 +287,7 @@ async fn host_toggle_model_and_result_store_limits() {
     worker.shutdown().await;
     let mut config = worker.config.clone();
     config.allow_host_execution = true;
-    let worker = Worker::new(config);
+    let worker = Worker::new(config).unwrap();
     for _ in 0..2 {
         let input: Submission = serde_json::from_value(
             json!({"kind":"research","instructions":"fixture","root":c.dir.path().join("source")}),
@@ -362,6 +362,11 @@ async fn real_stdio_discovery_paging_and_shutdown() {
         .call_tool(CallToolRequestParams::new("ag_capabilities"))
         .await
         .unwrap();
+    let audit_path = std::path::PathBuf::from(
+        caps.structured_content.as_ref().unwrap()["audit_connection_directory"]
+            .as_str()
+            .unwrap(),
+    );
     assert_eq!(
         caps.structured_content.as_ref().unwrap()["default_isolation"],
         false
@@ -402,5 +407,163 @@ async fn real_stdio_discovery_paging_and_shutdown() {
     assert_eq!(v["text"].as_str().unwrap().chars().count(), 5);
     assert_eq!(v["verification_status"], "unverified");
     client.cancel().await.unwrap();
+    let incoming = String::from_utf8(audit_bytes(&audit_path, "mcp.stdin")).unwrap();
+    let outgoing = String::from_utf8(audit_bytes(&audit_path, "mcp.stdout")).unwrap();
+    assert!(incoming.contains("ag_submit") && incoming.contains("fixture"));
+    assert!(outgoing.contains("unverified") && outgoing.contains("default_isolation"));
+    c.worker.shutdown().await;
+}
+
+fn audit_bytes(directory: &std::path::Path, prefix: &str) -> Vec<u8> {
+    let mut files: Vec<_> = fs::read_dir(directory)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(&format!("{prefix}."))
+        })
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .flat_map(|p| fs::read(p).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn full_audit_survives_shutdown_and_keeps_complete_task_materials() {
+    let c = Context::new(8);
+    let id = c.submit("CASE:audit", json!({})).unwrap();
+    let result = c.wait(&id).await;
+    let directory = c.worker.audit.directory.clone().unwrap();
+    c.worker.shutdown().await;
+    assert!(directory.exists());
+    let prefix = format!("job-{id}");
+    assert_eq!(
+        audit_bytes(&directory, &format!("{prefix}.input-0000")),
+        b"original\n"
+    );
+    let stdin = String::from_utf8(audit_bytes(&directory, &format!("{prefix}.cli.stdin"))).unwrap();
+    let stdout =
+        String::from_utf8(audit_bytes(&directory, &format!("{prefix}.cli.stdout"))).unwrap();
+    let stderr =
+        String::from_utf8(audit_bytes(&directory, &format!("{prefix}.cli.stderr"))).unwrap();
+    assert!(stdin.contains("CASE:audit"));
+    assert!(stdout.contains("structured_output") && stdout.contains("SUCCESS"));
+    assert!(stderr.contains("Synthetic audit diagnostic."));
+    let events = String::from_utf8(audit_bytes(&directory, "events")).unwrap();
+    assert!(
+        events.contains("job.queued")
+            && events.contains("job.finished")
+            && events.contains("connection.shutdown")
+    );
+    for line in events.lines() {
+        assert!(serde_json::from_str::<Value>(line).is_ok());
+    }
+    assert_eq!(result["exit_code"], 0);
+    assert!(result["duration_ms"].is_number());
+    for entry in fs::read_dir(directory).unwrap() {
+        assert!(antigravity_worker_mcp::platform::is_private(
+            &entry.unwrap().metadata().unwrap()
+        ));
+    }
+}
+
+#[tokio::test]
+async fn disabled_audit_creates_no_files_and_cli_override_is_complete() {
+    let c = Context::new(8);
+    let mut config = c.worker.config.clone();
+    config.audit_logging = false;
+    config.audit_directory = c.dir.path().join("disabled-audit");
+    let worker = Worker::new(config.clone()).unwrap();
+    let input: Submission = serde_json::from_value(
+        json!({"kind":"review","root":c.dir.path().join("source"),"instructions":"fixture"}),
+    )
+    .unwrap();
+    let id = worker.submit(input).unwrap()["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for _ in 0..100 {
+        if worker.status(&id).unwrap()["state"] == "completed" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let result = worker.result(&id, 0, 8000, false).unwrap();
+    assert_eq!(result["state"], "completed");
+    assert_eq!(result["audit_logging"], false);
+    assert!(result["audit_directory"].is_null());
+    assert!(result["audit_stream_prefix"].is_null());
+    assert!(!config.audit_directory.exists());
+    worker.shutdown().await;
+    let override_path = c.dir.path().join("override-audit");
+    let config_path = c.dir.path().join("override.json");
+    fs::write(&config_path,json!({"agyPath":env!("CARGO_BIN_EXE_agy-fixture"),"allowedRoots":[c.dir.path().join("source")],"models":{"fast":"fixture-fast"},"stateDirectory":c.worker.config.state_directory,"auditDirectory":override_path,"auditLogging":true}).to_string()).unwrap();
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_antigravity-worker-mcp"));
+    command.args(["--config", config_path.to_str().unwrap(), "--no-audit"]);
+    use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
+    let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
+    let caps = client
+        .call_tool(CallToolRequestParams::new("ag_capabilities"))
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(caps["audit_logging"], false);
+    assert!(caps["audit_connection_directory"].is_null());
+    client.cancel().await.unwrap();
+    assert!(!override_path.exists());
+    c.worker.shutdown().await;
+}
+
+#[tokio::test]
+async fn audit_rotation_preserves_every_byte_and_log_failure_stops_execution() {
+    let c = Context::new(8);
+    let mut config = c.worker.config.clone();
+    config.audit_rotate_bytes = 4096;
+    let worker = Worker::new(config).unwrap();
+    let payload = "\u{e9}\u{1f680}".repeat(2500).into_bytes();
+    worker.audit.bytes("payload", &payload).unwrap();
+    let directory = worker.audit.directory.clone().unwrap();
+    assert_eq!(audit_bytes(&directory, "payload"), payload);
+    let input: Submission = serde_json::from_value(json!({"kind":"review","root":c.dir.path().join("source"),"instructions":"CASE:child","timeout_seconds":15})).unwrap();
+    let _ = worker.submit(input).unwrap();
+    let sentinel = c.dir.path().join("source/child-alive.txt");
+    for _ in 0..100 {
+        if sentinel.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(sentinel.exists());
+    worker
+        .audit
+        .bytes("failure-trigger", &vec![b'x'; 4000])
+        .unwrap();
+    fs::remove_dir_all(&directory).unwrap();
+    assert_eq!(
+        worker
+            .audit
+            .bytes("failure-trigger", &[b'x'; 100])
+            .unwrap_err()
+            .code,
+        "AUDIT_FAILED"
+    );
+    for _ in 0..100 {
+        if worker.capabilities().await.is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let before = fs::read(&sentinel).unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(before, fs::read(&sentinel).unwrap());
+    assert!(worker.audit.has_failed());
+    worker.shutdown().await;
     c.worker.shutdown().await;
 }

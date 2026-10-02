@@ -2,13 +2,15 @@
 
 [![CI](https://github.com/getio0909/antigravity-worker-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/getio0909/antigravity-worker-mcp/actions/workflows/ci.yml)
 
-[Product requirements](docs/RPD.md) | [Protocol](docs/protocol.md) | [Verification](docs/verification.md)
+[Product requirements](docs/RPD.md) | [Protocol](docs/protocol.md) | [Clients](docs/clients.md) | [Audit logging](docs/audit.md) | [Verification](docs/verification.md)
 
 A Rust MCP worker for the official Google Antigravity CLI. Codex, Claude Code, and other stdio MCP clients can submit background tasks, check status, read reports, and cancel execution. Run the standalone executable or use the optional npm launcher.
 
 **Default: no isolation, full current-user permissions, automatic execution.** Tasks run in the original configured workspace with `--dangerously-skip-permissions`. Set **`isolation: true`** for a separate working copy, or select **`execution_mode: "analysis"`** for read-only inputs.
 
 Headless mode by itself does not approve every tool action. The wrapper passes the explicit automatic-approval flag to the official `agy`; no `agy-yolo` alias or separate executable is required.
+
+**Full local audit logging is also enabled by default.** It retains MCP requests/responses, selected inputs, CLI streams and terminal results after shutdown. Logs rotate without automatic deletion. Use `--no-audit` or `auditLogging: false` to disable wrapper logging completely. See [audit logging](docs/audit.md) for storage, privacy and failure behavior.
 
 Version 0.1 is experimental. It uses your installed `agy` and cached login on Linux, macOS or Windows. This community project has no Google affiliation and does not implement Google's private model APIs or change account overage settings.
 
@@ -33,8 +35,8 @@ CI runs native compilation, lint, tests and packaging for all six targets. Linux
 The release includes an npm package that works without an npm registry publication. With Node.js 20.11 or newer and npm installed:
 
 ```bash
-npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.1/antigravity-worker-mcp-0.1.1.tgz antigravity-worker-mcp --version
-npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.1/antigravity-worker-mcp-0.1.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.2/antigravity-worker-mcp-0.1.2.tgz antigravity-worker-mcp --version
+npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.2/antigravity-worker-mcp-0.1.2.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
 ```
 
 The dependency-free Node launcher downloads the matching Rust archive, verifies its release SHA-256, and caches the extracted executable and documentation. Later launches verify the cached executable before using it. Arguments, working directory, environment and stdin/stdout pass through to Rust; download messages use stderr. The official `agy` still needs a separate installation and login. Unix extraction requires `tar`; Windows uses PowerShell. Linux musl systems and older glibc need a source build.
@@ -81,13 +83,15 @@ claude mcp add --scope user antigravity-worker -- /absolute/path/antigravity-wor
 Or register the npm launcher on Linux/macOS:
 
 ```bash
-codex mcp add antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.1/antigravity-worker-mcp-0.1.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
-claude mcp add --scope user antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.1/antigravity-worker-mcp-0.1.1.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+codex mcp add antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.2/antigravity-worker-mcp-0.1.2.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
+claude mcp add --scope user antigravity-worker -- npx -y --package=https://github.com/getio0909/antigravity-worker-mcp/releases/download/v0.1.2/antigravity-worker-mcp-0.1.2.tgz antigravity-worker-mcp --config /absolute/path/config.local.json
 ```
 
 On Windows, register `cmd /c npx` in place of `npx` so the MCP host can launch npm's command shim. Run the `--version` command once before registration to populate the native executable cache.
 
 Restart an existing session to load the server. Codex `/mcp` shows connection status; `claude mcp list` checks Claude Code's configured connection. See the [Codex documentation](https://learn.chatgpt.com/docs/extend/mcp) and [Claude Code documentation](https://code.claude.com/docs/en/mcp) for host-specific settings.
+
+The [client guide](docs/clients.md) covers startup timeouts, temporary headless connections, approvals and working directories. Codex's default ten-second startup timeout can be too short for an initial npx download; prewarm the cache or increase it.
 
 To remove registrations:
 
@@ -151,7 +155,9 @@ Workspace and analysis modes require Linux. macOS and Windows reject isolation r
 
 Isolated execution keeps the original project outside the mount namespace, but exposes system programs, configured runtimes, network access and the CLI's read-only authentication file. It is not a network firewall or an exfiltration barrier against hostile tasks. Host cancellation covers the supervised CLI and process group; detached services and external side effects can remain.
 
-The wrapper does not persist instructions or raw conversations. Results stay in memory, expire after one hour by default, and clear when the connection closes. Isolated CLI history is temporary. Default host mode uses the official CLI's normal history and retention settings. Host clients and Google's services have their own retention behavior.
+Results stay in memory, expire after one hour by default, and clear when the connection closes. Full audit logs persist independently in the private state directory; they include task instructions and observed tool output. Isolated CLI history is temporary. Default host mode uses the official CLI's normal history and retention settings. Disabling wrapper logs does not change client, CLI or provider retention.
+
+The underlying CLI is an autonomous agent. The wrapper adds input context and a final report format, without extra behavioral instructions or a host-tool allowlist. The agent chooses its commands, reads and working steps. Audit logs record those actions; they do not veto them. Reports remain `unverified`; inspect actual results and side effects.
 
 Instances sharing one `stateDirectory` share one execution lock and serialize CLI jobs. Each connection owns its queue and results. Different directories or machines have independent locks. Quota/capacity failures pause dispatch only in the affected connection. Token usage is reported when available; remaining subscription quota is unknown.
 

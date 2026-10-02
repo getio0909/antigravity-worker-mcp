@@ -18,7 +18,7 @@ try {
   await extractArchive(archive, directory, windows ? 'win32' : process.platform);
   const binary = join(directory, `antigravity-worker-mcp${windows ? '.exe' : ''}`);
   assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), VERSION);
-  for (const file of ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CONTRIBUTING.md', 'SECURITY.md', 'CHANGELOG.md', 'docs/RPD.md', 'docs/protocol.md', 'docs/architecture.md', 'docs/verification.md', 'examples/config.example.json', 'examples/config.windows.example.json']) {
+  for (const file of ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CONTRIBUTING.md', 'SECURITY.md', 'CHANGELOG.md', 'docs/RPD.md', 'docs/protocol.md', 'docs/architecture.md', 'docs/audit.md', 'docs/clients.md', 'docs/verification.md', 'examples/config.example.json', 'examples/config.windows.example.json']) {
     assert.ok((await readFile(join(directory, file))).length > 0, `Missing archive document: ${file}`);
   }
   console.log(`Verified archive, executable version and documentation for ${target}.`);

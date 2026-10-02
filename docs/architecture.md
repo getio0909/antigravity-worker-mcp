@@ -2,13 +2,15 @@
 
 The Rust executable hosts the official RMCP stdio server. Each connection owns a bounded job store and one Tokio execution lane. Rust's native file-lock API on `stateDirectory/execution.lock` coordinates one active CLI task across instances using the same directory, using Unix file locks or Windows file locking. Handles close on process exit, so a crash releases the execution lock. Queues and results are not shared.
 
-`model.rs` defines configuration, task and report contracts. `snapshot.rs` captures selected inputs and validates evidence. Unix input traversal uses directory descriptors and `openat`; Windows rejects reparse points and validates the opened handle's final path and link count. `platform.rs` provides file locks, permissions and process supervision. `runtime.rs` launches the CLI, handles streams, provides optional Linux Bubblewrap mounts, and creates patches. `jobs.rs` coordinates deadlines, cancellation, retention and quota pause. `server.rs` maps these operations to MCP tools. `main.rs` handles configuration and connection shutdown.
+`model.rs` defines configuration, task and report contracts. `snapshot.rs` captures selected inputs and validates evidence. Unix input traversal uses directory descriptors and `openat`; Windows rejects reparse points and validates the opened handle's final path and link count. `platform.rs` provides file locks, permissions and process supervision. `runtime.rs` launches the CLI, handles streams, provides optional Linux Bubblewrap mounts, and creates patches. `jobs.rs` coordinates deadlines, cancellation, retention and quota pause. `audit.rs` retains MCP bytes, runtime streams, selected inputs and lifecycle records. `server.rs` maps these operations to MCP tools. `main.rs` handles configuration and connection shutdown.
 
 ## Default host execution
 
 `isolation: false` is the default. The CLI starts in an allowed original directory, inherits the launch environment, and receives automatic approval. Existing CLI settings, plugins, MCP connections, hooks, history, and provider overage settings may apply. The root allowlist validates only the starting directory. It does not limit later host access.
 
 The wrapper does not add Git commits, pushes, deployments, or rollback steps on its own. A fully authorized CLI task can perform those operations through its commands. The caller must define its intended scope.
+
+Task input preserves the caller's objective and adds the task type, workspace context, selected filenames and final report format. It adds no behavioral instructions. The CLI remains an autonomous agent that chooses tools and working steps. Audit capture observes that execution without vetoing individual tool actions.
 
 ## Optional isolated execution
 
@@ -30,9 +32,11 @@ Unix cancellation sends TERM to the supervised process group, then KILL after tw
 
 Unix state directories require current-user ownership and mode 0700. Windows uses `%LOCALAPPDATA%/antigravity-worker-mcp` by default and inherits its profile ACL. The wrapper rejects reparse points but does not audit or replace Windows ACLs; use a directory restricted to the intended account. Windows input checks validate the final handle inside its configured root, but do not promise the same atomic parent traversal as Unix `openat`.
 
-The wrapper removes temporary directories on normal completion, failure and cancellation. A process crash or SIGKILL can leave `job-*` or `probe-*` directories in the private state directory. Stop all instances and inspect directory ownership before removing those remnants. Do not remove `execution.lock` while instances are active: unlinking an advisory lock can allow two groups of processes to lock different inodes.
+The wrapper removes temporary directories on normal completion, failure and cancellation. A process crash or SIGKILL can leave `job-*` directories in the private state directory. Stop all instances and inspect directory ownership before removing those remnants. Do not remove `execution.lock` while instances are active: unlinking an advisory lock can allow two groups of processes to lock different inodes.
 
 Results remain in memory and expire after the configured retention interval, with a one-second sweep. Closing the connection cancels jobs and clears results. There is no persistent recovery or idempotency key in version 0.1.
+
+Audit logs persist separately in unique private connection directories. Streams rotate without deleting previous segments; JSON records remain whole. Job and connection checkpoints sync open log files. Enabled write failures trigger cancellation through the audit failure token and stop further dispatch. Disabled logging creates no audit artifacts. These logs support inspection, not task recovery, complete host observation or tamper-proof evidence. See [audit logging](audit.md).
 
 Quota/capacity failures stop new dispatch only in the affected connection. The host-wide lock still serializes other connections, but does not share the pause decision. Different machines or state directories have independent locks. A shared broker is a later milestone.
 

@@ -128,7 +128,19 @@ jobs:
           npm_packages=(artifacts/*/*.tgz)
           test "${#npm_packages[@]}" -eq 1
           cp "${archives[@]}" "${npm_packages[@]}" release/
-          (cd release && sha256sum -- ./* > SHA256SUMS)
+          (cd release && sha256sum -- *.tar.gz *.zip *.tgz > SHA256SUMS)
+      - name: Verify release manifest with the launcher
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFile, readdir } from 'node:fs/promises';
+          import { checksumFor, hashFile } from './npm/lib/launcher.mjs';
+          const manifest = await readFile('release/SHA256SUMS', 'utf8');
+          const files = (await readdir('release')).filter(name => name !== 'SHA256SUMS');
+          assert.equal(files.length, 7);
+          for (const name of files) assert.equal(await hashFile(`release/${name}`), checksumFor(manifest, name));
+          console.log('Verified all seven release files against the launcher manifest format.');
+          JS
       - name: Publish experimental release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

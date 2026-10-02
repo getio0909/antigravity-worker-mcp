@@ -45,7 +45,7 @@ pub enum Profile {
     Fast,
     Deep,
 }
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Submission {
     pub kind: Kind,
@@ -103,6 +103,9 @@ fn retention() -> u64 {
 fn host_enabled() -> bool {
     true
 }
+fn audit_rotation() -> usize {
+    16_777_216
+}
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
@@ -118,6 +121,12 @@ pub struct Config {
     pub runtime_paths: Vec<PathBuf>,
     #[serde(default)]
     pub state_directory: PathBuf,
+    #[serde(default = "host_enabled")]
+    pub audit_logging: bool,
+    #[serde(default)]
+    pub audit_directory: PathBuf,
+    #[serde(default = "audit_rotation")]
+    pub audit_rotate_bytes: usize,
     #[serde(default = "timeout")]
     pub timeout_seconds: u64,
     #[serde(default = "queue")]
@@ -157,6 +166,7 @@ impl Config {
             || !(1..=32).contains(&c.max_queue)
             || !(c.max_queue..=256).contains(&c.max_jobs)
             || !(60..=86400).contains(&c.retention_seconds)
+            || !(4096..=268_435_456).contains(&c.audit_rotate_bytes)
         {
             return Err(Failure::new(
                 "CONFIG_INVALID",
@@ -258,6 +268,15 @@ impl Config {
                 "State must be a private directory, with mode 0700 on Unix and no reparse point on Windows.",
             ));
         }
+        if c.audit_directory.as_os_str().is_empty() {
+            c.audit_directory = c.state_directory.join("audit");
+        }
+        if !c.audit_directory.is_absolute() {
+            return Err(Failure::new(
+                "CONFIG_INVALID",
+                "Audit directory must be absolute.",
+            ));
+        }
         Ok(c)
     }
     pub fn model(&self, profile: Profile) -> Outcome<String> {
@@ -314,6 +333,8 @@ pub struct ManifestEntry {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct RunResult {
+    pub exit_code: Option<i32>,
+    pub duration_ms: Option<u64>,
     pub response: String,
     pub report: Option<Report>,
     pub manifest: Vec<ManifestEntry>,
@@ -328,6 +349,8 @@ pub struct RunResult {
 impl RunResult {
     pub fn empty(model: String) -> Self {
         Self {
+            exit_code: None,
+            duration_ms: None,
             model,
             response: String::new(),
             report: None,

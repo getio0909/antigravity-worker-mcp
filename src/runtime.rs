@@ -1,4 +1,4 @@
-use crate::{model::*, platform, snapshot};
+use crate::{audit::Capture, model::*, platform, snapshot};
 use serde_json::{Value, json};
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::MetadataExt;
@@ -10,7 +10,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
@@ -108,8 +108,36 @@ pub async fn process(
     progress: Option<ProgressCallback>,
     inherit_environment: bool,
 ) -> Outcome<ProcessOutput> {
+    process_with_capture(
+        command,
+        args,
+        cwd,
+        stdin,
+        timeout,
+        cancel,
+        progress,
+        inherit_environment,
+        None,
+    )
+    .await
+}
+#[allow(clippy::too_many_arguments)]
+async fn process_with_capture(
+    command: &Path,
+    args: &[OsString],
+    cwd: Option<&Path>,
+    stdin: Option<String>,
+    timeout: Duration,
+    cancel: &CancellationToken,
+    progress: Option<ProgressCallback>,
+    inherit_environment: bool,
+    capture: Option<Capture>,
+) -> Outcome<ProcessOutput> {
     if cancel.is_cancelled() {
         return Err(Failure::new("CANCELLED", "Task was cancelled."));
+    }
+    if let Some(audit) = &capture {
+        audit.record("process.dispatch",json!({"executable":command,"args":args.iter().map(|v|v.to_string_lossy()).collect::<Vec<_>>(),"cwd":cwd,"inherit_environment":inherit_environment}))?;
     }
     let mut cmd = Command::new(command);
     cmd.args(args);
@@ -160,10 +188,32 @@ pub async fn process(
             return Err(error);
         }
     };
+    if let Some(audit) = &capture
+        && let Err(error) = audit.record("process.started", json!({"pid":child.id()}))
+    {
+        group.kill();
+        let _ = child.wait().await;
+        return Err(error);
+    }
     let mut input = child.stdin.take().unwrap();
+    let stdin_capture = capture.clone();
     let writer = tokio::spawn(async move {
         if let Some(text) = stdin {
-            let _ = input.write_all(text.as_bytes()).await;
+            let mut remaining = text.as_bytes();
+            while !remaining.is_empty() {
+                let Ok(count) = input.write(remaining).await else {
+                    break;
+                };
+                if count == 0 {
+                    break;
+                }
+                if let Some(audit) = &stdin_capture
+                    && audit.bytes("stdin", &remaining[..count]).is_err()
+                {
+                    break;
+                }
+                remaining = &remaining[count..];
+            }
         }
         drop(input);
     });
@@ -177,6 +227,7 @@ pub async fn process(
         notify.clone(),
         progress,
         true,
+        capture.clone(),
     );
     let err_task = reader(
         child.stderr.take().unwrap(),
@@ -185,11 +236,16 @@ pub async fn process(
         notify.clone(),
         None,
         false,
+        capture.clone(),
     );
+    let audit_failed = capture
+        .as_ref()
+        .map_or_else(CancellationToken::new, Capture::failure_token);
     let mut interrupted = None;
     let status = tokio::select! {
         s = child.wait() => s.map_err(io_failure),
         _ = cancel.cancelled() => { interrupted = Some(Failure::new("CANCELLED", "Task was cancelled.")); Err(interrupted.clone().unwrap()) },
+        _ = audit_failed.cancelled() => { interrupted = Some(Failure::new("AUDIT_FAILED", "Full audit logging failed; execution was stopped.")); Err(interrupted.clone().unwrap()) },
         _ = tokio::time::sleep(timeout) => { interrupted = Some(Failure::new("TIMEOUT", "Task deadline elapsed; execution was terminated.")); Err(interrupted.clone().unwrap()) },
         _ = notify.notified() => { interrupted = failure.lock().unwrap().clone(); Err(interrupted.clone().unwrap_or_else(|| Failure::new("STREAM_INVALID", "Output failed validation."))) },
     };
@@ -223,6 +279,9 @@ pub async fn process(
             )
         })?
         .map_err(io_failure)?;
+    if let Some(audit) = &capture {
+        audit.record("process.finished",json!({"exit_code":status.as_ref().ok().and_then(|s|s.code()),"interrupted":interrupted,"supervised_process_stopped":true}))?;
+    }
     if let Some(f) = interrupted.or_else(|| failure.lock().unwrap().clone()) {
         return Err(f);
     }
@@ -241,6 +300,7 @@ fn reader<R: AsyncRead + Unpin + Send + 'static>(
     notify: Arc<Notify>,
     callback: Option<ProgressCallback>,
     stdout: bool,
+    capture: Option<Capture>,
 ) -> tokio::task::JoinHandle<(Vec<u8>, EventParser)> {
     tokio::spawn(async move {
         let mut output = vec![];
@@ -252,8 +312,14 @@ fn reader<R: AsyncRead + Unpin + Send + 'static>(
                 Ok(n) => n,
             };
             let bytes = &buffer[..count];
+            let audit_error = capture.as_ref().and_then(|a| {
+                a.bytes(if stdout { "stdout" } else { "stderr" }, bytes)
+                    .err()
+            });
             let too_large = total.fetch_add(count, Ordering::Relaxed) + count > MAX_OUTPUT;
-            let error = if too_large {
+            let error = if audit_error.is_some() {
+                audit_error
+            } else if too_large {
                 Some(Failure::new("OUTPUT_LIMIT", "CLI output exceeded 2 MiB."))
             } else if stdout && callback.is_some() {
                 parser.push(bytes).err()
@@ -495,19 +561,13 @@ pub fn sandbox(_: &Config, _: &Path, _: &Path, _: Mode) -> Outcome<Vec<OsString>
         "Isolation requires Linux; no host fallback is performed.",
     ))
 }
-pub async fn capabilities(config: &Config, cancel: &CancellationToken) -> Outcome<Value> {
-    let dir = tempfile::Builder::new()
-        .prefix("probe-")
-        .tempdir_in(&config.state_directory)
-        .map_err(io_failure)?;
-    let work = dir.path().join("work");
-    fs::create_dir(&work).map_err(io_failure)?;
-    let settings_path = dir.path().join("settings.json");
-    fs::write(&settings_path, settings(config, Mode::Analysis).to_string()).map_err(io_failure)?;
-    let base = vec![];
-    let mut args = base.clone();
-    args.push("--version".into());
-    let version = process(
+pub async fn capabilities(
+    config: &Config,
+    cancel: &CancellationToken,
+    capture: Capture,
+) -> Outcome<Value> {
+    let args = [OsString::from("--version")];
+    let version = process_with_capture(
         &config.agy_path,
         &args,
         None,
@@ -516,11 +576,11 @@ pub async fn capabilities(config: &Config, cancel: &CancellationToken) -> Outcom
         cancel,
         None,
         true,
+        Some(capture.nested("version")),
     )
     .await?;
-    let mut args = base;
-    args.push("models".into());
-    let models = process(
+    let args = [OsString::from("models")];
+    let models = process_with_capture(
         &config.agy_path,
         &args,
         None,
@@ -529,6 +589,7 @@ pub async fn capabilities(config: &Config, cancel: &CancellationToken) -> Outcom
         cancel,
         None,
         true,
+        Some(capture.nested("models")),
     )
     .await?;
     let catalog: Vec<_> = if models.code == Some(0) {
@@ -575,13 +636,27 @@ pub async fn execute(
     timeout: Duration,
     cancel: &CancellationToken,
     progress: ProgressCallback,
+    capture: Capture,
 ) -> RunResult {
+    let started = Instant::now();
     let mut result = RunResult::empty(config.model(input.model_profile).unwrap_or_default());
-    if let Err(e) = execute_inner(config, input, timeout, cancel, progress, &mut result).await {
+    if let Err(e) = execute_inner(
+        config,
+        input,
+        timeout,
+        cancel,
+        progress,
+        &mut result,
+        capture,
+    )
+    .await
+    {
         result.error = Some(e);
     }
+    result.duration_ms = Some(started.elapsed().as_millis() as u64);
     result
 }
+#[allow(clippy::too_many_arguments)]
 async fn execute_inner(
     config: &Config,
     input: &Submission,
@@ -589,6 +664,7 @@ async fn execute_inner(
     cancel: &CancellationToken,
     progress: ProgressCallback,
     result: &mut RunResult,
+    capture: Capture,
 ) -> Outcome<()> {
     let dir = tempfile::Builder::new()
         .prefix("job-")
@@ -596,15 +672,27 @@ async fn execute_inner(
         .map_err(io_failure)?;
     let work = dir.path().join("work");
     result.manifest = snapshot::capture(config, input, &work)?;
+    capture.record("input.manifest", json!({"files":result.manifest}))?;
+    for (index, entry) in result.manifest.iter().enumerate() {
+        let bytes = fs::read(work.join(&entry.path)).map_err(io_failure)?;
+        let stream = format!("input-{index:04}");
+        capture.bytes(&stream, &bytes)?;
+        capture.record(
+            "input.snapshot",
+            json!({"path":entry.path,"sha256":entry.sha256,"bytes":bytes.len(),"stream":stream}),
+        )?;
+    }
     if input.execution_mode == Mode::Workspace {
         snapshot::copy_tree(&work, &dir.path().join("base"))?;
     }
     let settings_path = dir.path().join("settings.json");
-    fs::write(
-        &settings_path,
-        settings(config, input.execution_mode).to_string(),
-    )
-    .map_err(io_failure)?;
+    if input.execution_mode != Mode::Host {
+        fs::write(
+            &settings_path,
+            settings(config, input.execution_mode).to_string(),
+        )
+        .map_err(io_failure)?;
+    }
     let host_root = if input.execution_mode == Mode::Host {
         Some(snapshot::allowed_root(config, input.root.as_deref())?)
     } else {
@@ -634,17 +722,19 @@ async fn execute_inner(
         } else {
             "accept-edits".into()
         },
-        "--disable-slash-commands".into(),
         "--print-timeout".into(),
         format!("{}s", timeout.as_secs().max(1)).into(),
         "--json-schema".into(),
         serde_json::to_string(&schema).map_err(io_failure)?.into(),
     ]);
+    if input.execution_mode != Mode::Host {
+        args.push("--disable-slash-commands".into());
+    }
     if input.execution_mode != Mode::Analysis {
         args.push("--dangerously-skip-permissions".into());
     }
     let request = format!(
-        "Task type: {:?}. Execution mode: {:?}.\nSelected inputs are in {}. Cite file paths and line numbers or HTTP(S) sources. State incomplete work in limitations. Follow the project's runtime and environment policies.\nReturn exactly one final JSON object with summary (string), findings (array), and limitations (array of strings). Every finding must contain title, detail, severity (info/low/medium/high), and evidence (array). Every evidence entry must contain file, line, url, and excerpt; use null for absent file, line, or url. Findings must be objects, never strings. Use an empty findings array when no finding needs evidence. Do not include toolAction or toolSummary fields.\nSelected files: {}\n{}",
+        "Task type: {:?}. Execution mode: {:?}.\nWorkspace: {}.\nSelected files: {}\n\nTask:\n{}\n\nFinal report format: JSON matching the supplied schema, with summary (string), findings (array of objects), and limitations (array of strings). Findings contain title, detail, severity (info/low/medium/high), and evidence (array). Evidence entries contain file, line, url, and excerpt; use null for absent file, line, or url. An empty findings array is valid.",
         input.kind,
         input.execution_mode,
         if host_root.is_some() {
@@ -656,7 +746,7 @@ async fn execute_inner(
         input.instructions
     );
     let body = json!({"event":"user","message":{"content":request}}).to_string() + "\n";
-    let run = process(
+    let run = process_with_capture(
         &command,
         &args,
         host_root.as_deref(),
@@ -665,8 +755,10 @@ async fn execute_inner(
         cancel,
         Some(progress),
         host_root.is_some(),
+        Some(capture.nested("cli")),
     )
     .await?;
+    result.exit_code = run.code;
     let envelope = run.parser.result.unwrap_or(Value::Null);
     result.actual_model = run.parser.model;
     result.cli_status = envelope["status"].as_str().map(String::from);
@@ -731,7 +823,7 @@ async fn execute_inner(
             "work",
         ]
         .map(OsString::from);
-        let diff = process(
+        let diff = process_with_capture(
             Path::new("/usr/bin/git"),
             &args,
             Some(dir.path()),
@@ -740,6 +832,7 @@ async fn execute_inner(
             cancel,
             None,
             false,
+            Some(capture.nested("diff")),
         )
         .await?;
         if !matches!(diff.code, Some(0 | 1)) {

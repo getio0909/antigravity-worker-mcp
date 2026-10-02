@@ -1,56 +1,96 @@
 # Verification record
 
-Recorded on 2026-10-02 for experimental version 0.1.1. A passed engineering check establishes the behavior described in that check, not the accuracy of arbitrary model tasks.
+Recorded on 2026-10-02 for experimental version 0.1.2. Engineering checks establish the tested runtime behavior. Product acceptance also requires actual client calls, inspection of changed files and review of the execution trace.
 
 ## Local engineering checks
 
 Environment: Linux x86-64, glibc 2.41, Rust and Cargo 1.97.1, official RMCP 3.5.0, Bubblewrap and working unprivileged user namespaces.
 
-The format and warning-free Clippy checks passed, along with fifteen tests (three unit tests and twelve integration tests). Tests cover default host permissions and edits; optional isolated patches and unchanged originals; analysis write denial; deadlines; malformed and excessive output; queued and running cancellation; supervised descendant termination; quota pause; model and result limits; shared execution locks; input path, link and text checks; Unicode pagination; and an actual RMCP stdio client connection.
+Format, warning-free Clippy and eighteen Rust tests passed: three unit tests and fifteen integration tests. Coverage includes host edits and permissions; isolated patches and unchanged originals; analysis write denial; deadlines; malformed/excessive output; cancellation and supervised descendants; quota pause; shared execution locks; input-path checks; Unicode pagination; a real RMCP stdio connection; full audit capture surviving shutdown; both complete off switches; byte-preserving rotation; and cancellation after an actual audit write failure.
 
-The [six-target CI run](https://github.com/getio0909/antigravity-worker-mcp/actions/runs/36987181226) passed for the runtime implementation. Linux ran fifteen tests; macOS and Windows ran fourteen tests each, including explicit isolation rejection. The 0.1.1 packaging correction includes all root maintenance documents and derives reported versions from Cargo metadata. Its tag workflow repeats native checks before publication on these targets:
+The earlier [six-target runtime CI run](https://github.com/getio0909/antigravity-worker-mcp/actions/runs/36987181226) passed before audit logging was added. Version 0.1.2 repeats native compilation, lint, tests and archive checks on all six targets. Expected Rust test counts are eighteen on Linux and seventeen on macOS/Windows, where unsupported isolation is rejected. Check the tag's Actions run for final outcomes.
 
-| Target | Runner | Intended checks |
+| Target | Native runner | Checks |
 | --- | --- | --- |
-| x86_64-unknown-linux-gnu | ubuntu-22.04 | Host, isolation, protocol and archive. |
-| aarch64-unknown-linux-gnu | ubuntu-22.04-arm | Host, isolation, protocol and archive. |
-| x86_64-apple-darwin | macos-15-intel | Host, isolation rejection, protocol and archive. |
-| aarch64-apple-darwin | macos-15 | Host, isolation rejection, protocol and archive. |
-| x86_64-pc-windows-msvc | windows-2025 | Host, Job Objects, isolation rejection, protocol and archive. |
-| aarch64-pc-windows-msvc | windows-11-arm | Host, Job Objects, isolation rejection, protocol and archive. |
+| x86_64-unknown-linux-gnu | ubuntu-22.04 | Host, isolation, audit, protocol, launcher and archive. |
+| aarch64-unknown-linux-gnu | ubuntu-22.04-arm | Host, isolation, audit, protocol, launcher and archive. |
+| x86_64-apple-darwin | macos-15-intel | Host, isolation rejection, audit, protocol, launcher and archive. |
+| aarch64-apple-darwin | macos-15 | Host, isolation rejection, audit, protocol, launcher and archive. |
+| x86_64-pc-windows-msvc | windows-2025 | Host, Job Objects, isolation rejection, audit, protocol, launcher and archive. |
+| aarch64-pc-windows-msvc | windows-11-arm | Host, Job Objects, isolation rejection, audit, protocol, launcher and archive. |
 
-Check the repository's Actions run for the tag's current outcomes. Linux archive extraction, checksum verification, executable startup, tool discovery and live CLI capability queries were also checked locally against a CI-produced archive.
+The dependency-free npm launcher passed seven local tests: target/runtime selection, exact manifest entries, hash rejection before extraction, cache verification and tamper detection, concurrent installation, HTTP/download bounds, and argument/cwd/environment/stdio/exit-code forwarding. CI repeats them on every runner and extracts actual native archives through the launcher. A Windows test comparison now resolves both paths before comparing, covering short and long spellings of the same directory.
 
-The optional npm launcher passed seven local tests covering six-target selection and unsupported runtimes, exact manifest entries, checksum rejection before extraction, cache verification and tamper detection, concurrent cache installation, HTTP errors and download bounds, and argument/cwd/environment/stdio/exit-code forwarding. CI repeats these tests on all six runners and uses the launcher's native extraction path to verify every archive's checksum, executable version and required documents. The npm tarball has no third-party dependencies or install hook; package-content inspection excludes source fixtures, private configurations and build output. A local tarball npx launch returned version 0.1.1 from a verified extracted binary. Release-URL npx startup is checked after publication rather than inferred from package metadata.
+Package checks exclude private configurations, native test fixtures and build output. Every native archive includes the executable, licenses and root maintenance documents; both native and npm packages include the audit/client guides. A previous local-tarball npx invocation started version 0.1.1 from a verified binary. Version 0.1.2 release-URL startup is checked after publication; registry publication is separate.
 
-## Official CLI checks
+## Model discussion and reasoning controls
 
-The installed official CLI was version 1.2.14. A capability query returned fourteen model entries without inference, with default host mode and `default_isolation: false`.
+Product-level reviews used fixed `gemini-3.8-flash-high` and `claude-opus-4-6-thinking` slugs through the installed official CLI. The brief contained no source files or implementation recipes. Source inspection and tool use were disabled. Current [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp), [Claude Code MCP](https://code.claude.com/docs/en/mcp) and [headless](https://code.claude.com/docs/en/headless) documentation informed later rounds and client checks.
+
+Flash High accepted `--effort high`; `--effort max` conflicted with the model variant. Opus Thinking rejected the effort control, and the installed CLI exposed no maximum reasoning-budget setting for it. No alternate model was substituted.
+
+Gemini completed its initial review, peer-assessment follow-up, documentation-informed review and live-trace follow-up. Opus completed its initial assessment; later peer/documentation/live-trace follow-ups ended with provider HTTP 503 capacity errors. Partial text from those failures is not a completed review. The completed Opus assessment reported zero separately classified thinking tokens; this does not establish an absence of internal reasoning or a configurable maximum.
+
+The reviews supported focused background delegation and local auditability. Storage-failure behavior and minimal opt-out metadata drew different recommendations across rounds. The implemented contract is full local capture, no automatic deletion, a complete off switch with no retained marker, and cancellation after enabled log I/O fails. It does not claim unanimous approval, immutable evidence or strict host command enforcement.
+
+## Actual Codex and Claude Code sessions
+
+Installed versions were Codex 0.160.0 and Claude Code 2.1.285; both had existing authenticated accounts. Temporary headless sessions connected independently to the Rust release executable without changing global registrations. Both shared a private execution-lock directory and used CLI 1.2.14 with `gemini-3.8-flash-high`.
+
+Both clients called capabilities, submitted a task, kept the connection alive while polling status and retrieved the final result. Capabilities showed default host execution, `isolation: false`, automatic host approval and full audit logging. Parent-client reads and an independent byte check verified each resulting file: six bytes with SHA-256 `ed1a545bb85e55816bbf9566b028b2a0bc456b88f49f6f266c0401048824194b`.
+
+| Client | Runtime outcome | File check | Trace inspection |
+| --- | --- | --- | --- |
+| Codex | `completed`, CLI `SUCCESS`, exit 0; wrapper duration 19,301 ms. | Expected bytes confirmed. | Native file read/write tools; no command or historical-transcript read in the captured trace. |
+| Claude Code | `completed`, CLI `SUCCESS`, exit 0; wrapper duration 104,509 ms. | Expected bytes confirmed. | One unrelated command and five reads of previous CLI transcripts outside the project. |
+
+The second worker used additional tools despite the probe's request to avoid commands, and its valid report did not disclose those actions. Claude Code independently found them in the retained trace. The edit passed; the trace exposed additional working steps. Task wording was not an enforced tool policy. The final adapter passes goals, input context and report formatting without adding behavioral instructions, leaving tool selection to the autonomous CLI. Acceptance checks actual results and side effects rather than assuming that a formatted report describes the entire process.
+
+The two audit directories retained eighteen files totaling 112,879 bytes after client shutdown. Unix directories were mode 0700 and every file was 0600. Both recorded connection closure, exact MCP streams, selected inputs, CLI streams and terminal metadata. Private configuration and full logs remain outside the public project and release packages.
+
+### Autonomous coding follow-up
+
+Both clients then submitted an objective to complete a small JavaScript module against existing project checks. The final adapter supplied task context and report formatting without behavioral restrictions. The agents chose their own reads, edits and shell commands. Both returned `completed`, CLI `SUCCESS` and exit 0.
+
+| Client | Wrapper runtime duration | Observed command invocations | Independent acceptance |
+| --- | --- | --- | --- |
+| Codex | 48,018 ms. | 5, including npm checks and directory/Git inspection. | Correct module, original checks unchanged, npm check passed and five additional numeric cases passed. |
+| Claude Code | 105,008 ms. | 17, including npm checks and inspection outside the project. | Correct module, original checks unchanged, npm check passed and five additional numeric cases passed. |
+
+The resulting modules were identical, with SHA-256 `5b63136552577a64d788dc3cd4552739d0d60f9e1adb63ec4dfb6932d56fc75d`. The wrapper allowed the observed tool choices and retained them. No Python or environment-manager command appeared in the captured task trace. Two additional closed audit directories retained twenty-two files totaling 157,511 bytes, all mode 0600. Autonomous execution can include substantial exploratory work; these small tasks do not establish quota efficiency.
+
+## Additional official CLI checks
+
+A live capability query returned fourteen catalog entries without inference. Earlier release-executable checks used a temporary official TypeScript MCP SDK client, not a runtime dependency:
 
 | Check | Observed result |
 | --- | --- |
-| Isolated single-file edit through the Rust release executable and an official TypeScript MCP SDK client. | Completed with a validated report; original bytes unchanged; returned patch contained the actual edit. |
-| Default host single-file edit in a temporary project. | Completed with a validated report; the original target file contained the requested replacement. |
-| Cancellation after real CLI progress began. | Returned cancelled with `process_stopped: true`. |
+| Optional isolated single-file edit. | Validated report; original bytes unchanged; returned patch contained the actual edit. |
+| Default host single-file edit. | Validated report; target bytes changed as intended. |
+| Cancellation after real CLI progress began. | Cancelled with `process_stopped: true`. |
 
-Both final editing checks used gemini-3.8-flash-medium. Observed CLI usage:
+The earlier edits used `gemini-3.8-flash-medium`. CLI-reported usage:
 
-| Mode | Input | Output | Thinking | Cache read | Reported total |
+| Check | Input | Output | Thinking | Cache read | Reported total |
 | --- | --- | --- | --- | --- | --- |
-| Workspace | 52,358 | 669 | 468 | 0 | 53,027 |
-| Host | 72,280 | 8,830 | 8,501 | 0 | 81,110 |
+| Earlier workspace | 52,358 | 669 | 468 | 0 | 53,027 |
+| Earlier host | 72,280 | 8,830 | 8,501 | 0 | 81,110 |
+| Codex-submitted host | 55,799 | 2,348 | 2,008 | 0 | 58,147 |
+| Claude-submitted host | 109,103 | 10,498 | 9,286 | 179,206 | 119,601 |
+| Codex autonomous coding | 158,770 | 3,160 | 2,278 | 24,304 | 161,930 |
+| Claude autonomous coding | 236,338 | 7,735 | 5,084 | 433,117 | 244,073 |
 
-These are CLI-reported fields; no subscription quota or price is inferred from them. No cached authentication values or real task instructions are included in this record.
-
-The provider checks used Linux and cached official authentication. The TypeScript SDK was a temporary test client only. Direct binary deployment has no Node.js dependency; the optional npx launcher requires Node.js and npm.
+No subscription allowance, price or quota efficiency is inferred from these fields. Direct binary deployment needs no Node.js runtime; the optional npx launcher needs Node.js and npm.
 
 ## Unverified behavior and limits
 
-- Complete real-provider workflows inside actual Codex and Claude Code sessions have not been tested. Registration commands follow their official documentation; SDK stdio interoperability has been tested.
-- Provider authentication on macOS/Windows, complex coding quality and research accuracy have not been measured.
-- The declared Rust 1.89 minimum has not been compiled locally; the tested and pinned CI compiler is 1.97.1.
-- No benchmark establishes submission P95, task success rate, quota efficiency or remaining account allowance.
-- macOS/Windows isolation, a shared result broker, durable restart recovery, strict interpreter controls and command resource quotas are outside version 0.1.
-- Host execution can affect original files and external services. Supervised cancellation does not certify rollback or termination of detached Unix sessions or services started outside the supervised runtime.
+- Real-provider authentication and complete client workflows on macOS/Windows remain unmeasured; native CI uses an account-free fixture.
+- Complex coding quality, research accuracy and sustained reliability remain unmeasured.
+- Opus peer/documentation follow-ups were not completed because of provider capacity errors. Maximum Opus reasoning intensity could not be selected.
+- Live cancellation was not repeated inside both parent clients; fixture supervision and a separate real-CLI cancellation were checked.
+- The declared Rust 1.89 minimum has not been compiled locally; the tested CI compiler is 1.97.1.
+- No benchmark establishes submission P95, task success rate, quota efficiency or remaining allowance.
+- Additional-platform isolation, shared results, durable restart recovery, immutable logging and strict command policies remain outside version 0.1.
+- Host tasks can change original files, inspect unrelated materials or affect external services. Cancellation does not certify rollback or termination of detached Unix sessions or external services.
 
-The release is experimental. Tests require no Google credentials and do not consume provider quota. The official CLI and model catalogs can change independently of this wrapper.
+This is an experimental release with observed autonomous working steps disclosed. Engineering CI needs no Google credentials and consumes no provider quota. CLI behavior, model catalogs and client settings can change independently of this wrapper.

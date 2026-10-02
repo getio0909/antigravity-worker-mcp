@@ -1,6 +1,6 @@
 # Antigravity Worker MCP product requirements document (RPD)
 
-Document version: 1.0. Product version: 0.1.1. Updated: 2026-10-02.
+Document version: 1.1. Product version: 0.1.2. Updated: 2026-10-02.
 
 This document defines behavior, interfaces, permissions, acceptance criteria and maintenance requirements. Source code, automated tests and the [verification record](verification.md) establish what has been implemented and tested. Roadmap features are outside the current release contract.
 
@@ -79,6 +79,8 @@ Host and workspace modes pass `--dangerously-skip-permissions`; they do not requ
 
 Host execution inherits the launching environment and existing CLI configuration. `isolation` defaults to false. Setting it to true resolves host mode to workspace; explicit analysis remains read-only. An operator can disable host execution, in which case default host submissions fail explicitly. Tool-call approval in Codex or Claude Code remains controlled by that client.
 
+The CLI remains an autonomous agent. The adapter forwards the task objective and adds input context and a final report format, without behavioral restrictions. The agent chooses its working steps; full audit capture records them without acting as a per-tool veto. Acceptance checks the actual outcome, preserved inputs and observed side effects.
+
 The host `allowedRoots` list validates starting directories. It is not a filesystem sandbox and does not restrict paths later accessed by commands. Isolated modes keep the original input root outside the mount namespace. Runtime and authentication mounts must be documented.
 
 Isolated execution uses generated settings rather than inheriting personal MCP connections, skills, hooks or project configuration directories. Host execution retains existing CLI settings, so configured hooks or external tools can run. Operators need to review those settings.
@@ -130,9 +132,12 @@ P0 is the initial release scope. P1 and P2 are later milestones.
 | F-17 | P1 | Shared job broker. | Both clients can query one job with shared scheduling, quota pause and cancellation. |
 | F-18 | P1 | Git worktree coding. | Preserve baseline commit, existing changes and conflicts without automatic merging. |
 | F-19 | P1 | Recovery and idempotency. | Distinguish undispatched, interrupted and complete jobs; repeated keys do not create extra executions. |
-| F-20 | P1 | Strict command boundary. | Enforce interpreter, path, network and tool policies, including bypass cases. |
+| F-20 | P1 | Optional execution policy. | Explicit operator configuration can enforce interpreter, path, network or tool limits; unrestricted host execution remains the default. |
 | F-21 | P2 | Persistent sessions and alternative backends. | Verify authentication, quota, context and capabilities before adding an official SDK or persistent CLI. |
 | F-22 | P2 | More platforms and registries. | Perform platform integration checks and publish a support matrix with signed artifacts or checksums. |
+| F-23 | P0 | Full local audit retention by default. | Preserve MCP traffic, selected inputs, CLI streams, lifecycle and terminal results after disconnect and result expiry. |
+| F-24 | P0 | Complete audit off switch and lossless rotation. | Configuration or CLI disables all wrapper audit artifacts; rotation preserves every segment without automatic deletion. |
+| F-25 | P0 | Explicit enabled-log failure. | Reject unsafe storage; stop dispatch and cancel affected supervised jobs after a write or sync failure. |
 
 ## 8. MCP interface contract
 
@@ -214,6 +219,7 @@ A busy shared lock causes lock-acquisition retries, not repeated inference. Lock
 | Lifecycle | TIMEOUT / CANCELLED | Stop supervised execution, clean temporary data and return terminal state. |
 | Stream or result | STREAM_INVALID / OUTPUT_LIMIT / RESULT_SCHEMA_INVALID / EVIDENCE_INVALID | Mark incomplete; retain validated or bounded partial information when available. |
 | Patch | PATCH_FAILED | Do not claim that an applicable patch was delivered. |
+| Audit storage | AUDIT_UNSAFE / AUDIT_FAILED | Reject unsafe startup storage or stop affected execution after enabled log I/O fails. |
 
 Diagnostic text classification is a compatibility layer and needs fixtures as CLI behavior changes. Unknown errors remain generic. Raw stderr is not returned because it can contain sensitive data. Success requires compatible terminal JSON, CLI status, process exit, permission checks and report validation together.
 
@@ -221,16 +227,19 @@ Diagnostic text classification is a compatibility layer and needs fixtures as CL
 
 | Data | Location | Default retention | Output |
 | --- | --- | --- | --- |
-| Task instructions | Process memory and subprocess stdin. | Input references released after terminal completion. | Excluded from wrapper logs and persistent reports. |
-| Selected materials | Private temporary copy. | Until execution and cleanup finish. | Relative paths, SHA-256, bytes and line counts. |
+| Task instructions | Process memory, subprocess stdin and enabled private audit. | Runtime references released after terminal completion; audit has no automatic expiry. | Full observed task bytes in private audit, not public documents. |
+| Selected materials | Private temporary copy and enabled private audit. | Temporary copy until cleanup; audit has no automatic expiry. | Full selected bytes plus paths, SHA-256, bytes and line counts. |
 | Isolated CLI history | Private mount namespace. | Discarded when the runtime exits. | Not copied into source or reports. |
 | Reports and patches | MCP process memory. | One hour after terminal completion; cleared on disconnect. | Character pages. |
 | Execution lock | User-private state directory. | May remain between executions. | No task text or credential values. |
 | Host CLI history | Official CLI data directories. | Official CLI and account settings. | The wrapper does not promise to remove it. |
+| Full audit streams and results | Private per-connection audit directory. | Preserved until explicitly removed; rotation never deletes older segments. | Exact observed MCP/CLI bytes and JSON lifecycle records. |
 
 Captured inputs are UTF-8 text: at most 100 files, 256 KiB each and 4 MiB total. Reject absolute file paths, traversal, symlinks, hardlinks, binary data, obvious credential names and configuration directories. Filename filtering does not redact secrets embedded in ordinary source files. The caller must select materials appropriate for the task.
 
 The official CLI, host client and provider have separate history, telemetry and retention behavior. The product cannot promise end-to-end absence of records. Authentication is made available to the official CLI without the wrapper reading or duplicating its values.
+
+The logger does not inspect authentication caches or dump environment values. Full task/tool streams can contain sensitive information and are retained privately without content redaction. Host tasks share current-user permissions and can alter these logs. The trace is neither immutable nor a record of every file access or external effect. `auditLogging: false` or `--no-audit` disables every wrapper audit artifact without changing other products' history. See the [audit contract](audit.md).
 
 ## 12. Architecture and implementation constraints
 
@@ -245,9 +254,12 @@ flowchart LR
     A --> P[NDJSON parser and validator]
     P --> R[In-memory reports and patches]
     R --> M
+    M --> D[Private full audit]
+    E --> D
+    P --> D
 ```
 
-Rust, the official RMCP SDK, Tokio and Serde produce one native executable per platform and architecture. Subprocesses receive argument arrays without shell interpolation. Instructions go through stdin to keep them out of process arguments. Events and diagnostics have a total output ceiling and are not persisted as raw logs. Unix supervision uses process groups; Windows uses a kill-on-close Job Object assigned before task stdin is delivered.
+Rust, the official RMCP SDK, Tokio and Serde produce one native executable per platform and architecture. Subprocesses receive argument arrays without shell interpolation. Instructions go through stdin to keep them out of process arguments. In-memory events and diagnostics have a total output ceiling; enabled audit logging retains raw observed streams separately. Unix supervision uses process groups; Windows uses a kill-on-close Job Object assigned before task stdin is delivered.
 
 Isolated execution needs private PID and mount namespaces. The original input root is not mounted. Document system programs, additional runtime paths and authentication mounts. Network access is not a domain firewall.
 
@@ -264,6 +276,9 @@ Protocol, scheduling, execution, input capture and validation remain separate mo
 | researchDomains | Analysis URL-read domains. | Empty array. |
 | runtimePaths | Additional read-only isolated toolchain directories. | Empty array. |
 | stateDirectory | Private temporary data and shared lock. | User-local state directory. |
+| auditLogging | Full local wrapper audit capture. | True. |
+| auditDirectory | Private retained per-connection log directories. | `stateDirectory/audit`. |
+| auditRotateBytes | Segment threshold; JSON records remain whole. | 16 MiB; supported range 4 KiB–256 MiB. |
 | timeoutSeconds | Default deadline including queue wait. | 300 seconds. |
 | maxQueue | Maximum unfinished jobs per connection. | 8. |
 | maxJobs | Maximum retained jobs per connection. | 64. |
@@ -313,6 +328,8 @@ Model-quality evaluation is separate from engineering checks. One successful req
 | A-13 | Host mode. | Configuration toggle works; temporary-project checks cover commands and changes without claiming rollback. |
 | A-14 | Public content. | Staged content excludes credentials, personal configuration, real instructions and session data. |
 | A-15 | Open-source delivery. | Public repository, MIT license, English documentation, six-target CI, version tag, source and verified platform archives. |
+| A-16 | Full audit and complete disable. | Exact selected inputs and observed stdin/stdout/stderr survive shutdown; disabled configuration and CLI create no audit artifacts. |
+| A-17 | Audit rotation and I/O failure. | Concatenated segments preserve Unicode bytes; a real write failure stops supervised descendants. |
 
 An experimental 0.1 release can disclose unverified items. A stable release requires both host-client workflows, real-provider host execution, complex tasks and platform compatibility checks. The [verification record](verification.md) distinguishes completed checks from those gaps.
 
@@ -342,6 +359,8 @@ Milestones do not assign speculative release dates or model-quality scores. Comp
 | --- | --- | --- |
 | CLI protocol or authentication locations change. | Adapter, version query and real CLI checks. | Continued maintenance; unknown versions are not guaranteed compatible. |
 | Broad-permission tasks affect the host. | Explicit defaults and resolved modes; optional isolation and host-disable setting. | Default tasks have current-user privileges and no automatic rollback. |
+| A report omits autonomous working steps. | Full observed tool trace and independent change inspection; reports remain unverified. | The wrapper does not restrict individual host-tool actions through added task instructions. |
+| Full logs grow or expose private materials. | Private directories, complete off switch, rotation and storage-failure cancellation. | No automatic deletion; same-user tasks can alter logs; operators control archival and access. |
 | Hostile materials induce commands or disclosure. | Original input root absent from isolation, generated settings, selected input scope. | Network and authentication mounts still require trusted tasks; no exfiltration guarantee. |
 | Quota and charges are unpredictable. | Shared host lock, finite deadlines, no inference retries and connection quota pause. | Existing account overage applies; remaining quota is unknown. |
 | Well-formed reports contain wrong conclusions. | Unverified status, source-location bounds and patch applicability checks. | Semantic correctness needs host verification and task evaluation. |

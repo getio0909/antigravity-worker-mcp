@@ -27,8 +27,10 @@ pub struct Empty {}
 #[serde(deny_unknown_fields)]
 pub struct ResultArgs {
     pub job_id: String,
+    /// Starting offset in Unicode characters.
     #[serde(default)]
     pub offset: usize,
+    /// Page length in Unicode characters, from 1 to 16,000; defaults to 8,000.
     #[serde(default = "page_size")]
     pub limit: usize,
     #[serde(default)]
@@ -78,7 +80,7 @@ impl Server {
         reply(self.worker.status(&id.job_id))
     }
     #[tool(
-        description = "Read an unverified report or patch in Unicode character pages. Follow next_offset for subsequent pages. Completion does not certify correctness.",
+        description = "Read an unverified report or patch in Unicode character pages. limit is 1-16000 (default 8000); offset counts characters. Follow next_offset for subsequent pages. Completion does not certify correctness.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn ag_result(&self, Parameters(args): Parameters<ResultArgs>) -> CallToolResult {
@@ -113,7 +115,7 @@ impl Server {
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_server_info(
-            rmcp::model::Implementation::new("antigravity-worker-mcp", "0.1.0"),
+            rmcp::model::Implementation::new("antigravity-worker-mcp", env!("CARGO_PKG_VERSION")),
         )
     }
 }

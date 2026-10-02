@@ -10,7 +10,13 @@ Isolation requires Linux. Windows and macOS support host mode and reject isolate
 
 Isolation keeps the original input root outside the mount namespace. It exposes system programs, configured toolchains, outbound network access, and the CLI's read-only authentication file. It does not provide an exfiltration barrier against hostile commands, a network firewall, or CPU/disk quotas. Secret-name filtering does not detect all secrets inside otherwise ordinary files.
 
-The wrapper does not persist instructions, raw events, or diagnostics. Isolated CLI history is ephemeral; host-mode official history, MCP-host retention and provider-side retention follow their own settings. A forced wrapper termination may leave private temporary files; follow the architecture cleanup instructions.
+Full local audit logging is enabled by default. It retains task instructions, selected file bytes, MCP traffic, unfiltered CLI streams, diagnostics and terminal results in private per-connection directories, with rotation and no automatic deletion. These materials can contain sensitive content. The wrapper does not dump environment values or inspect authentication caches, but model/tool output can expose private data. Do not upload audit logs to public issues. See the [audit contract](docs/audit.md).
+
+Use `--no-audit` or `auditLogging: false` to disable wrapper logging completely. No audit metadata or disabled marker is retained in that mode. CLI, MCP-host and provider retention follow their own settings. An enabled logger's storage failure stops dispatch and cancels the affected connection's supervised jobs rather than silently dropping records.
+
+The host-mode agent chooses its own tools and working steps. The wrapper adds task context and report formatting without behavioral restrictions. Task wording does not enforce command or filesystem policy. With current-user authority, the agent can also modify or delete audit files; the trace is not tamper-proof. Inspect actual results and side effects independently.
+
+Isolated CLI history is ephemeral. A forced wrapper termination may leave private temporary files; follow the architecture cleanup instructions.
 
 Cancellation supervises the CLI and process group. Host-mode detached processes, modified files and external side effects can outlive cancellation. Reports are always unverified until independently checked.
 

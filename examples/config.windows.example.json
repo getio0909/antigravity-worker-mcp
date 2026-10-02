@@ -6,6 +6,7 @@
     "deep": null
   },
   "allowHostExecution": true,
+  "auditLogging": true,
   "timeoutSeconds": 300,
   "maxQueue": 8,
   "maxJobs": 64,

@@ -1,4 +1,4 @@
-use crate::{model::*, runtime};
+use crate::{audit::Audit, model::*, runtime};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
@@ -48,6 +48,7 @@ struct Job {
 }
 pub struct Worker {
     pub config: Config,
+    pub audit: Arc<Audit>,
     jobs: Mutex<HashMap<String, Job>>,
     lane: Arc<Semaphore>,
     pub paused: AtomicBool,
@@ -55,9 +56,11 @@ pub struct Worker {
     closed: AtomicBool,
 }
 impl Worker {
-    pub fn new(config: Config) -> Arc<Self> {
+    pub fn new(config: Config) -> Outcome<Arc<Self>> {
+        let audit = Audit::open(&config)?;
         let worker = Arc::new(Self {
             config,
+            audit,
             jobs: Mutex::new(HashMap::new()),
             lane: Arc::new(Semaphore::new(1)),
             paused: AtomicBool::new(false),
@@ -77,7 +80,16 @@ impl Worker {
                 w.prune();
             }
         });
-        worker
+        let weak = Arc::downgrade(&worker);
+        let failed = worker.audit.failure_token();
+        let stopped = worker.stopped.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = failed.cancelled() => { if let Some(worker) = weak.upgrade() { worker.shutdown().await; } },
+                _ = stopped.cancelled() => {},
+            }
+        });
+        Ok(worker)
     }
     fn prune(&self) {
         let keep = self.config.retention_seconds * 1000;
@@ -128,6 +140,11 @@ impl Worker {
         let seconds = input.timeout_seconds.unwrap_or(self.config.timeout_seconds);
         let cancel = CancellationToken::new();
         let done = Arc::new(Notify::new());
+        self.audit.record(
+            "job.queued",
+            json!({"job_id":id,"submission":input,"deadline":submitted+seconds*1000}),
+        )?;
+        self.audit.flush()?;
         store.insert(
             id.clone(),
             Job {
@@ -177,7 +194,12 @@ impl Worker {
                 r
             }
         };
-        if cancel.is_cancelled() {
+        if self.audit.has_failed() {
+            result.error = Some(Failure::new(
+                "AUDIT_FAILED",
+                "Full audit logging failed; execution was stopped.",
+            ));
+        } else if cancel.is_cancelled() {
             result.error = Some(Failure::new("CANCELLED", "Task was cancelled."));
         }
         let quota = result
@@ -186,6 +208,14 @@ impl Worker {
             .is_some_and(|e| e.code == "QUOTA_EXHAUSTED");
         if quota {
             self.paused.store(true, Ordering::Relaxed);
+        }
+        if let Err(error) = self
+            .audit
+            .record("job.finished", json!({"job_id":id,"result":result}))
+            .and_then(|_| self.audit.close_scope(&format!("job-{id}")))
+            .and_then(|_| self.audit.flush())
+        {
+            result.error = Some(error);
         }
         let mut store = self.jobs.lock().unwrap();
         if let Some(j) = store.get_mut(&id) {
@@ -239,6 +269,10 @@ impl Worker {
             j.state = State::Running;
             j.started = Some(now());
         }
+        self.audit.record(
+            "job.running",
+            json!({"job_id":id,"execution_mode":input.execution_mode}),
+        )?;
         let weak = Arc::downgrade(self);
         let task_id = id.to_string();
         let progress: runtime::ProgressCallback = Arc::new(move |v| {
@@ -255,7 +289,9 @@ impl Worker {
                 "Task deadline elapsed before dispatch.",
             ));
         }
-        let result = runtime::execute(&self.config, input, remaining, cancel, progress).await;
+        let capture = self.audit.capture(format!("job-{id}"));
+        let result =
+            runtime::execute(&self.config, input, remaining, cancel, progress, capture).await;
         if result
             .error
             .as_ref()
@@ -307,6 +343,7 @@ impl Worker {
         Ok(
             json!({"job_id":id,"state":j.state,"ready":true,"completion":if j.state==State::Completed{"complete"}else{"incomplete"},"verification_status":"unverified",
             "model":r.model,"actual_model":r.actual_model,"cli_status":r.cli_status,"usage":r.usage,"error":r.error,
+            "exit_code":r.exit_code,"duration_ms":r.duration_ms,"audit_logging":self.config.audit_logging,"audit_directory":self.audit.directory,"audit_stream_prefix":self.config.audit_logging.then(||format!("job-{id}")),
             "summary":r.report.as_ref().map(|v|&v.summary),"findings_preview":preview,"findings_count":r.report.as_ref().map_or(0,|v|v.findings.len()),
             "limitations":r.report.as_ref().map(|v|&v.limitations),"manifest":if offset==0{r.manifest.clone()}else{vec![]},
             "section":if patch{"patch"}else{"response"},"text":page,"next_offset":if offset.saturating_add(limit)<total{Some(offset+limit)}else{None},"total_characters":total,
@@ -314,6 +351,9 @@ impl Worker {
         )
     }
     pub async fn cancel(&self, id: &str) -> Outcome<Value> {
+        let _ = self
+            .audit
+            .record("job.cancel_requested", json!({"job_id":id}));
         let done = {
             let mut store = self.jobs.lock().unwrap();
             let j = store.get_mut(id).ok_or_else(not_found)?;
@@ -345,7 +385,16 @@ impl Worker {
         Ok(status)
     }
     pub async fn capabilities(&self) -> Outcome<Value> {
-        let mut v = runtime::capabilities(&self.config, &self.stopped).await?;
+        let prefix = format!("probe-{}", uuid::Uuid::new_v4());
+        let capture = self.audit.capture(prefix.clone());
+        let result = runtime::capabilities(&self.config, &self.stopped, capture).await;
+        self.audit.close_scope(&prefix)?;
+        let mut v = result?;
+        v["audit_logging"] = self.config.audit_logging.into();
+        v["audit_connection_directory"] =
+            serde_json::to_value(&self.audit.directory).map_err(io_failure)?;
+        v["audit_rotation_bytes"] = self.config.audit_rotate_bytes.into();
+        v["audit_auto_delete"] = false.into();
         v["dispatch_paused"] = self.paused.load(Ordering::Relaxed).into();
         v["retained_jobs"] = self.jobs.lock().unwrap().len().into();
         v["isolation_installed"] =
@@ -355,6 +404,10 @@ impl Worker {
     pub async fn shutdown(&self) {
         self.closed.store(true, Ordering::Relaxed);
         self.stopped.cancel();
+        let _ = self.audit.record(
+            "connection.shutdown",
+            json!({"audit_failed":self.audit.has_failed()}),
+        );
         let ids: Vec<_> = self
             .jobs
             .lock()

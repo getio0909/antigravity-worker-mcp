@@ -124,6 +124,6 @@ process.exitCode = 7;
   assert.equal(output, wire);
   const inherited = JSON.parse(errors);
   assert.deepEqual(inherited.args, ['--config', 'a path with spaces.json', '--literal=$value']);
-  assert.equal(inherited.cwd, await realpath(root));
+  assert.equal(await realpath(inherited.cwd), await realpath(root));
   assert.equal(inherited.marker, 'inherited');
 });

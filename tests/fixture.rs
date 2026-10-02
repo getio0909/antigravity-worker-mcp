@@ -31,6 +31,9 @@ fn main() {
         .map(|i| args[i + 1].clone())
         .unwrap_or_default();
     println!("{}", json!({"event":"init","init":{"model":model}}));
+    if text.contains("CASE:audit") {
+        eprintln!("Synthetic audit diagnostic.");
+    }
     if text.contains("CASE:malformed") {
         println!("invalid-json");
         return;
