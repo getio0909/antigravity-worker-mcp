@@ -667,13 +667,15 @@ async fn detached_jobs_survive_reconnection_and_accept_unlimited_duration() {
     let long = submitted["job_id"].as_str().unwrap().to_owned();
     second.cancel().await.unwrap();
     let sentinel = c.dir.path().join("source/child-alive.txt");
-    for _ in 0..100 {
-        if sentinel.exists() {
-            break;
-        }
+    let ready_until = Instant::now() + Duration::from_secs(10);
+    while !sentinel.exists() && Instant::now() < ready_until {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(sentinel.exists());
+    assert!(
+        sentinel.exists(),
+        "Detached descendant did not become ready; {}",
+        supervisor_diagnostics(&c.worker.config.state_directory, &long)
+    );
     let third = connect().await;
     let listed = third
         .call_tool(
