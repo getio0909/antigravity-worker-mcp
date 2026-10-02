@@ -8,7 +8,7 @@ Environment: Linux x86-64, glibc 2.41, Rust and Cargo 1.97.1, official RMCP 3.5.
 
 Format, warning-free Clippy and eighteen Rust tests passed: three unit tests and fifteen integration tests. Coverage includes host edits and permissions; isolated patches and unchanged originals; analysis write denial; deadlines; malformed/excessive output; cancellation and supervised descendants; quota pause; shared execution locks; input-path checks; Unicode pagination; a real RMCP stdio connection; full audit capture surviving shutdown; both complete off switches; byte-preserving rotation; and cancellation after an actual audit write failure.
 
-The earlier [six-target runtime CI run](https://github.com/getio0909/antigravity-worker-mcp/actions/runs/36987181226) passed before audit logging was added. Version 0.1.2 repeats native compilation, lint, tests and archive checks on all six targets. Expected Rust test counts are eighteen on Linux and seventeen on macOS/Windows, where unsupported isolation is rejected. Check the tag's Actions run for final outcomes.
+All six native jobs and the release publisher passed in the [v0.1.2 tag run](https://github.com/getio0909/antigravity-worker-mcp/actions/runs/36993481261). Each target passed compilation, lint, tests and archive checks. Rust test counts were eighteen on Linux and seventeen on macOS/Windows, where unsupported isolation is rejected. The matching source commit also passed the main-branch CI run.
 
 | Target | Native runner | Checks |
 | --- | --- | --- |
@@ -21,7 +21,9 @@ The earlier [six-target runtime CI run](https://github.com/getio0909/antigravity
 
 The dependency-free npm launcher passed seven local tests: target/runtime selection, exact manifest entries, hash rejection before extraction, cache verification and tamper detection, concurrent installation, HTTP/download bounds, and argument/cwd/environment/stdio/exit-code forwarding. CI repeats them on every runner and extracts actual native archives through the launcher. A Windows test comparison now resolves both paths before comparing, covering short and long spellings of the same directory.
 
-Package checks exclude private configurations, native test fixtures and build output. Every native archive includes the executable, licenses and root maintenance documents; both native and npm packages include the audit/client guides. A previous local-tarball npx invocation started version 0.1.1 from a verified binary. Version 0.1.2 release-URL startup is checked after publication; registry publication is separate.
+Package checks exclude private configurations, native test fixtures and build output. Every native archive includes the executable, licenses and root maintenance documents; both native and npm packages include the audit/client guides. The [published v0.1.2 release](https://github.com/getio0909/antigravity-worker-mcp/releases/tag/v0.1.2) contains six native archives, one npm tarball and `SHA256SUMS`. All seven package checksums matched after download. Archive inspection confirmed the declared binary architectures, README and license, with no absolute or parent-traversal entry paths.
+
+The public GitHub-tarball npx command downloaded the Linux x86-64 release and returned version 0.1.2. A subsequent launch used the verified cache and completed stdio initialization, listed all five tools and called `ag_capabilities`. The response reported CLI 1.2.14, fourteen model catalog entries, default host execution, isolation disabled and audit logging enabled. The process exited normally with logs retained. npm registry publication remains separate.
 
 ## Model discussion and reasoning controls
 
@@ -58,6 +60,14 @@ Both clients then submitted an objective to complete a small JavaScript module a
 | Claude Code | 105,008 ms. | 17, including npm checks and inspection outside the project. | Correct module, original checks unchanged, npm check passed and five additional numeric cases passed. |
 
 The resulting modules were identical, with SHA-256 `5b63136552577a64d788dc3cd4552739d0d60f9e1adb63ec4dfb6932d56fc75d`. The wrapper allowed the observed tool choices and retained them. No Python or environment-manager command appeared in the captured task trace. Two additional closed audit directories retained twenty-two files totaling 157,511 bytes, all mode 0600. Autonomous execution can include substantial exploratory work; these small tasks do not establish quota efficiency.
+
+### CC Switch registration
+
+A local CC Switch 3.20.4 build imported the verified native v0.1.2 executable through its MCP import dialog, with Codex and Claude Code enabled. Database flags and both client configuration files confirmed the registration. Existing MCP registrations, provider records, provider selections and the Codex authentication file were preserved. Claude Code received an allow rule for this server's tools while its other settings were preserved.
+
+Fresh Codex and Claude Code sessions then loaded the global registrations without an explicit replacement MCP configuration. Both called `ag_capabilities` successfully and exited with code 0. The Codex session took 20,221 ms and the Claude Code session 19,790 ms; these are session durations, not inference latency. The native connection check and two sessions retained three closed audit directories containing fifteen files and 29,559 bytes, all files mode 0600 and directories mode 0700. Capability queries performed no model inference through the worker.
+
+The registration check confirms client connectivity and configuration. The coding sessions above provide separate evidence of actual delegated work. Existing interactive sessions need to restart to load the added server.
 
 ## Additional official CLI checks
 

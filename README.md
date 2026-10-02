@@ -91,7 +91,7 @@ On Windows, register `cmd /c npx` in place of `npx` so the MCP host can launch n
 
 Restart an existing session to load the server. Codex `/mcp` shows connection status; `claude mcp list` checks Claude Code's configured connection. See the [Codex documentation](https://learn.chatgpt.com/docs/extend/mcp) and [Claude Code documentation](https://code.claude.com/docs/en/mcp) for host-specific settings.
 
-The [client guide](docs/clients.md) covers startup timeouts, temporary headless connections, approvals and working directories. Codex's default ten-second startup timeout can be too short for an initial npx download; prewarm the cache or increase it.
+The [client guide](docs/clients.md) covers CC Switch setup, startup timeouts, temporary headless connections, approvals and working directories. Codex's default ten-second startup timeout can be too short for an initial npx download; prewarm the cache or increase it.
 
 To remove registrations:
 

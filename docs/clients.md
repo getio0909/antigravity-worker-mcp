@@ -50,9 +50,30 @@ For a temporary connection, pass a JSON configuration using `--mcp-config` and `
 }
 ```
 
-`claude --print --no-session-persistence` supports headless invocation without saving the host session. MCP-tool approval remains a Claude Code setting; `--allowedTools` can authorize the selected server's tools for an invocation. These controls do not disable wrapper audit logging. Existing Claude account authentication and the CLI's Google authentication are independent.
+`claude --print --no-session-persistence` supports headless invocation without saving the host session. MCP-tool approval remains a Claude Code setting; `--allowedTools` can authorize the selected server's tools for an invocation. For later sessions, add `mcp__antigravity-worker__*` to `permissions.allow` in the user settings, preserving existing rules. This authorizes all tools from this server. See [Claude Code permissions](https://code.claude.com/docs/en/permissions). These controls do not disable wrapper audit logging. Existing Claude account authentication and the CLI's Google authentication are independent.
 
 Server working directories depend on Claude Code's configuration scope. Use absolute server/configuration paths and explicit configured `allowedRoots` plus task `root`; do not infer the project root from the server's inherited directory. The headless `--bare` mode skips OAuth/keychain lookup, so it is unsuitable for a check relying on an existing subscription login without separate credentials. See [Claude Code MCP](https://code.claude.com/docs/en/mcp) and [headless execution](https://code.claude.com/docs/en/headless).
+
+## CC Switch
+
+Open the MCP manager in CC Switch, add a server named `antigravity-worker`, and enter the following configuration with the actual executable and configuration paths:
+
+```json
+{
+  "type": "stdio",
+  "command": "/absolute/path/antigravity-worker-mcp",
+  "args": ["--config", "/absolute/path/config.local.json"],
+  "startup_timeout_sec": 120,
+  "tool_timeout_sec": 60,
+  "default_tools_approval_mode": "auto"
+}
+```
+
+Enable both **Codex** and **Claude Code** for this entry. CC Switch stores the registration and writes the client configurations: `~/.codex/config.toml` for Codex and `~/.claude.json` for Claude Code. The timeout and default approval fields configure Codex. Claude Code 2.1.285 accepted the same shared entry in the local check; its tool permissions are configured separately as described above. Keep the Google login in the official CLI's native storage.
+
+Start new client sessions, then check `codex mcp get antigravity-worker --json` and `claude mcp get antigravity-worker`. Call `ag_capabilities` from each client to confirm the connection, selected profiles and logging state. A local CC Switch 3.20.4 build and both installed clients passed this check; see the [verification record](verification.md).
+
+Manage removal through CC Switch so its stored registration and both client files stay consistent. Disabling the entry does not delete retained audit logs. See the [official CC Switch MCP guide](https://github.com/farion1231/cc-switch/blob/main/docs/user-manual/en/3-extensions/3.1-mcp.md).
 
 ## npx and platform details
 
