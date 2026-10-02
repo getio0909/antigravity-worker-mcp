@@ -31,7 +31,7 @@ exit `$code
 "@
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
 $powershell = (Get-Command pwsh).Source
-$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ CreateFlags = [uint32]0x01000008 }
+$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ CreateFlags = [uint32]0x01000000; ShowWindow = [uint16]0 }
 $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
     CommandLine = '"' + $powershell + '" -NoProfile -NonInteractive -EncodedCommand ' + $encoded
     CurrentDirectory = $workspace
@@ -45,6 +45,7 @@ Write-Host "Independent Windows test process: $($created.ProcessId)"
 try {
     $deadline = [DateTime]::UtcNow.AddMinutes(20)
     while (-not (Test-Path $result)) {
+        if (-not (Get-Process -Id $created.ProcessId -ErrorAction SilentlyContinue)) { throw 'Windows CI process exited without a result' }
         if ([DateTime]::UtcNow -ge $deadline) { throw 'Windows CI test process did not finish' }
         Start-Sleep -Milliseconds 250
     }
